@@ -1,0 +1,32 @@
+# 构建产物
+cmake-build-*/
+build/
+out/
+
+# 本地 MinGW 工具链（344MB 不入库；build.ps1 回退链：CLion 捆绑 → mingw_link → 系统 PATH）
+mingw_link/
+
+# 日志与运行残留
+logs/
+*.log
+saves/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+*.user
+
+# 编译中间产物
+*.obj
+*.o
+*.d
+*.exe
+*.pdb
+
+# 生成的演示项目（tools/generate_demo_project.py 产物，不入库）
+demo_project/
+
+# OS
+Thumbs.db
+.DS_Store
