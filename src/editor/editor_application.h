@@ -15,6 +15,7 @@
 #include "scene/systems/tilemap_render_system.h"
 #include "scene/systems/camera_system.h"
 #include "scene/systems/animator_system.h"
+#include "scene/systems/tilemap_mesh_builder.h"
 
 namespace mg {
 namespace editor {
@@ -79,15 +80,10 @@ private:
     renderer::DescriptorSet sprite_ubo_set_;
 
     // ---- Tilemap 渲染 ----
-    struct TilemapBatch {
-        VkDescriptorSet ds = VK_NULL_HANDLE;
-        uint32_t first_vertex = 0;
-        uint32_t vertex_count = 0;
-    };
     renderer::Buffer tilemap_vb_;
     renderer::Buffer tilemap_dummy_instance_vb_;
     uint32_t tilemap_vertex_count_ = 0;
-    std::vector<TilemapBatch> tilemap_batches_;
+    std::vector<scene::TilemapBatch> tilemap_batches_;
     // 瓦片动画时钟：帧哈希变化时重建 VB
     float tile_anim_time_ = 0.0f;
     uint32_t tile_anim_hash_ = 0;

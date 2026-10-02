@@ -1,0 +1,22 @@
+[
+    {
+        "id": "slime",
+        "name": "史莱姆",
+        "hp": 30,
+        "atk": 5,
+        "def": 2,
+        "gold": 10,
+        "exp": 5,
+        "sprite": "assets/sprites/Slime.png"
+    },
+    {
+        "id": "boss",
+        "name": "魔塔守卫",
+        "hp": 80,
+        "atk": 12,
+        "def": 8,
+        "gold": 50,
+        "exp": 20,
+        "sprite": "assets/sprites/Boss.png"
+    }
+]

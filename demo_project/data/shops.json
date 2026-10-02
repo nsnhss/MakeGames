@@ -1,0 +1,15 @@
+[
+    {
+        "id": "village_shop",
+        "items": [
+            {
+                "item_id": "potion",
+                "price": 50
+            },
+            {
+                "item_id": "bomb",
+                "price": 80
+            }
+        ]
+    }
+]

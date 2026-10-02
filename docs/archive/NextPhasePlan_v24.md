@@ -255,7 +255,7 @@ int main(int, char**) {
 | `src/editor/editor_menu_bar.cpp` | File → Export Game 菜单 | ~30 |
 | `editor/CMakeLists.txt` | 更新 link 依赖 | ~5 |
 | `launcher/CMakeLists.txt` | 更新 link 依赖 | ~5 |
-| `docs/QualityOverhaul.md` | 展开阶段五 | ~20 |
+| `QualityOverhaul.md`（同目录） | 展开阶段五 | ~20 |
 
 **总计 ~300 行（3 个新文件，其余改已有文件）。**
 

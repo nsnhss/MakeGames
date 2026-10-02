@@ -5,8 +5,9 @@
 #include "core/math/vec2.h"
 
 namespace mg {
-namespace scene { class World; }
-namespace editor {
+namespace scene {
+
+class World;
 
 // 播放模式控制：Edit/Playing/Paused 状态、标题/游戏画面、Fade 过渡、
 // 存档槽位与存读档请求、Play Mode 位置快照。
@@ -45,8 +46,8 @@ public:
     int ConsumeLoadRequest() { return std::exchange(pending_load_slot_, 0); }
 
     // Play Mode 快照：进入播放时保存所有 Transform position，停止时恢复
-    void TakeSnapshot(scene::World* world);
-    void RestoreSnapshot(scene::World* world);
+    void TakeSnapshot(World* world);
+    void RestoreSnapshot(World* world);
 
     // 存档槽位
     struct SaveSlotInfo {
@@ -72,5 +73,5 @@ private:
     std::unordered_map<uint32_t, math::Vec2> play_snapshot_;
 };
 
-} // namespace editor
+} // namespace scene
 } // namespace mg

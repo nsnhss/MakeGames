@@ -1,9 +1,12 @@
 #include "mg_imgui_theme.h"
 #include "imgui.h"
+#include "resource/vfs.h"
 #include <stdio.h>
+#include <cstring>
+#include <vector>
 
 namespace mg {
-namespace editor {
+namespace gameui {
 
 void MG_ApplyTheme_UE5Dark()
 {
@@ -13,7 +16,7 @@ void MG_ApplyTheme_UE5Dark()
     // ---- 色彩体系（UE5 暗色） ----
     const ImVec4 UE5_WindowBg         = ImVec4(0.059f, 0.059f, 0.059f, 1.00f);  // #0F0F0F
     const ImVec4 UE5_ChildBg          = ImVec4(0.082f, 0.082f, 0.082f, 1.00f);  // #151515
-    const ImVec4 UE5_PanelBg          = ImVec4(0.102f, 0.102f, 0.102f, 1.00f);  // #1A1A1A
+    [[maybe_unused]] const ImVec4 UE5_PanelBg          = ImVec4(0.102f, 0.102f, 0.102f, 1.00f);  // #1A1A1A
     const ImVec4 UE5_Header           = ImVec4(0.129f, 0.129f, 0.129f, 1.00f);  // #212121
     const ImVec4 UE5_HeaderActive     = ImVec4(0.169f, 0.169f, 0.169f, 1.00f);  // #2B2B2B
     const ImVec4 UE5_HeaderHovered    = ImVec4(0.149f, 0.149f, 0.149f, 1.00f);  // #262626
@@ -24,7 +27,7 @@ void MG_ApplyTheme_UE5Dark()
     const ImVec4 UE5_TextDim          = ImVec4(0.63f,  0.63f,  0.63f,  1.00f);  // #A0A0A0
     const ImVec4 UE5_Accent           = ImVec4(0.169f, 0.396f, 0.890f, 1.00f);  // #2B65E3 UE蓝
     const ImVec4 UE5_AccentHover      = ImVec4(0.220f, 0.470f, 0.950f, 1.00f);  // #3878F2
-    const ImVec4 UE5_AccentActive     = ImVec4(0.125f, 0.345f, 0.820f, 1.00f);  // #2058D1
+    [[maybe_unused]] const ImVec4 UE5_AccentActive     = ImVec4(0.125f, 0.345f, 0.820f, 1.00f);  // #2058D1
     const ImVec4 UE5_Button           = ImVec4(0.129f, 0.129f, 0.129f, 1.00f);  // #212121
     const ImVec4 UE5_ButtonHovered    = ImVec4(0.169f, 0.169f, 0.169f, 1.00f);  // #2B2B2B
     const ImVec4 UE5_ButtonActive     = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);  // #333333
@@ -40,9 +43,9 @@ void MG_ApplyTheme_UE5Dark()
     const ImVec4 UE5_ScrollbarGrab    = ImVec4(0.22f,  0.22f,  0.22f,  1.00f);  // #383838
     const ImVec4 UE5_ScrollbarGrabHovered = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);  // #4D4D4D
     const ImVec4 UE5_ScrollbarGrabActive  = ImVec4(0.38f, 0.38f, 0.38f, 1.00f);  // #606060
-    const ImVec4 UE5_Success          = ImVec4(0.20f,  0.80f,  0.20f,  1.00f);  // 绿
-    const ImVec4 UE5_Warning          = ImVec4(0.95f,  0.65f,  0.10f,  1.00f);  // 橙
-    const ImVec4 UE5_Error            = ImVec4(0.90f,  0.20f,  0.20f,  1.00f);  // 红
+    [[maybe_unused]] const ImVec4 UE5_Success          = ImVec4(0.20f,  0.80f,  0.20f,  1.00f);  // 绿
+    [[maybe_unused]] const ImVec4 UE5_Warning          = ImVec4(0.95f,  0.65f,  0.10f,  1.00f);  // 橙
+    [[maybe_unused]] const ImVec4 UE5_Error            = ImVec4(0.90f,  0.20f,  0.20f,  1.00f);  // 红
 
     // ---- 全局颜色映射 ----
     colors[ImGuiCol_Text]                   = UE5_Text;
@@ -154,12 +157,19 @@ ImFont* MG_LoadFonts(float scale)
     icons_cfg.GlyphOffset.y = 1.0f * scale;
     icons_cfg.GlyphMinAdvanceX = 14.0f * scale;
 
-    io.Fonts->AddFontFromFileTTF(
-        "assets/fonts/fa-solid-900.ttf",
-        10.0f * scale,
-        &icons_cfg,
-        icon_ranges
-    );
+    // ---- 图标字体：FontAwesome 6 Free Solid 14px（合并模式） ----
+    // 经 VFS 读取（pak 命中读包），内存加载；缓冲区所有权移交 ImGui 字体图集
+    std::vector<uint8_t> icon_bytes;
+    if (vfs::ReadFile("assets/fonts/fa-solid-900.ttf", icon_bytes)) {
+        void* icon_mem = ImGui::MemAlloc(icon_bytes.size());
+        memcpy(icon_mem, icon_bytes.data(), icon_bytes.size());
+        io.Fonts->AddFontFromMemoryTTF(
+            icon_mem, (int)icon_bytes.size(),
+            10.0f * scale,
+            &icons_cfg,
+            icon_ranges
+        );
+    }
 
     return font;
 }
@@ -172,7 +182,7 @@ void MG_ApplyTheme_UE5Light()
     // ---- 色彩体系（UE5 亮色） ----
     const ImVec4 UE5_WindowBg         = ImVec4(0.96f, 0.96f, 0.96f, 1.00f);  // #F5F5F5
     const ImVec4 UE5_ChildBg          = ImVec4(0.94f, 0.94f, 0.94f, 1.00f);  // #EFEFEF
-    const ImVec4 UE5_PanelBg          = ImVec4(0.92f, 0.92f, 0.92f, 1.00f);  // #EBEBEB
+    [[maybe_unused]] const ImVec4 UE5_PanelBg          = ImVec4(0.92f, 0.92f, 0.92f, 1.00f);  // #EBEBEB
     const ImVec4 UE5_Header           = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);  // #E6E6E6
     const ImVec4 UE5_HeaderActive     = ImVec4(0.86f, 0.86f, 0.86f, 1.00f);  // #DBDBDB
     const ImVec4 UE5_HeaderHovered    = ImVec4(0.88f, 0.88f, 0.88f, 1.00f);  // #E0E0E0
@@ -182,7 +192,7 @@ void MG_ApplyTheme_UE5Light()
     const ImVec4 UE5_TextDim          = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);  // #666666
     const ImVec4 UE5_Accent           = ImVec4(0.169f, 0.396f, 0.890f, 1.00f);  // #2B65E3
     const ImVec4 UE5_AccentHover      = ImVec4(0.220f, 0.470f, 0.950f, 1.00f);  // #3878F2
-    const ImVec4 UE5_AccentActive     = ImVec4(0.125f, 0.345f, 0.820f, 1.00f);  // #2058D1
+    [[maybe_unused]] const ImVec4 UE5_AccentActive     = ImVec4(0.125f, 0.345f, 0.820f, 1.00f);  // #2058D1
     const ImVec4 UE5_Button           = ImVec4(0.88f, 0.88f, 0.88f, 1.00f);  // #E0E0E0
     const ImVec4 UE5_ButtonHovered    = ImVec4(0.82f, 0.82f, 0.82f, 1.00f);  // #D1D1D1
     const ImVec4 UE5_ButtonActive     = ImVec4(0.76f, 0.76f, 0.76f, 1.00f);  // #C2C2C2
@@ -275,5 +285,5 @@ void MG_ApplyTheme_UE5Light()
     style.GrabMinSize        = 10.0f;
 }
 
-} // namespace editor
+} // namespace gameui
 } // namespace mg

@@ -1,7 +1,7 @@
 # MakeGames 游戏数据模型设计
 
 > 本文档是**数据规范**（Component 字段定义、事件命令规格、全局状态格式）。
-> 架构规划、项目目录结构、地图格式、Tileset 设计见 [`docs/2DFrameworkPlan.md`](2DFrameworkPlan.md)。
+> 架构规划、项目目录结构、地图格式、Tileset 设计见 [`docs/archive/2DFrameworkPlan.md`](archive/2DFrameworkPlan.md)（历史快照，部分设计已与实现漂移）。
 
 > 目标：定义 2D 游戏的核心类型、属性、事件系统，兼顾**零代码可视化制作**与**脚本扩展自由度**。
 
@@ -185,17 +185,17 @@ struct LuaScript {
 
 ### 5.1 事件触发方式
 
-| 触发方式 | 说明 | 参数 |
-|----------|------|------|
-| `on_enter` | 玩家进入触发区域 | 区域范围 (x, y, w, h) |
-| `on_exit` | 玩家离开触发区域 | 区域范围 |
-| `on_interact` | 玩家按下交互键（默认 Space/E）且面向此对象 | 交互距离 |
-| `on_touch` | 任意 Entity（不仅是玩家）触碰此触发器 | 目标 Tag 过滤 |
-| `on_start` | 地图加载完成后自动执行一次 | 延迟时间（秒） |
-| `on_update` | 每帧检测条件 | 条件表达式 |
-| `on_variable_change` | 全局变量变化时 | 变量名、目标值 |
-| `on_input` | 按下特定按键 | 按键名 |
-| `on_collision` | 物理碰撞发生时 | 目标 Tag |
+| 触发方式 | 说明 | 参数 | 实现状态 |
+|----------|------|------|----------|
+| `on_enter` | 玩家进入触发区域 | 事件点 ±16px 区域 vs 玩家 ±14px | ✅ |
+| `on_exit` | 玩家离开触发区域 | 同上（重叠差分） | ✅ |
+| `on_interact` | 玩家按下交互键（默认 Enter）且面向此对象 | 交互距离 | ✅ |
+| `on_touch` | 玩家持续停留于触发区域内 | 同上区域 | ✅（仅玩家，任意 Entity 未做） |
+| `on_start` | 地图加载完成后自动执行一次 | — | ✅ |
+| `on_update` | 每帧检测条件 | 页条件门控 | ✅ |
+| `on_variable_change` | 全局变量变化时 | 变量名、目标值 | 未实现 |
+| `on_input` | 按下特定按键（按下沿，按住不重复） | `condition.name` 存 SDL 按键名（如 `F1`、`Return`） | ✅ |
+| `on_collision` | 与进入触发区域同时派发 | 同上区域 | ✅（Tag 过滤无 Tag 组件支撑，未做） |
 
 ### 5.2 事件页（Event Page）
 

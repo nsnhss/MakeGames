@@ -1,6 +1,6 @@
 #include "editor_context.h"
 #include "panel.h"
-#include "debug_log.h"
+#include "core/debug_log.h"
 #include "scene/scene_serializer.h"
 #include "scene/components/transform.h"
 #include "scene/components/name.h"
@@ -95,55 +95,8 @@ bool EditorContext::OpenProject(const std::string& project_path) {
     EDITOR_LOG("EditorContext::OpenProject SetProjectPath");
     ResourceManager::Get().SetProjectPath(project_.GetProjectPath());
 
-    // 加载物品数据库
-    std::string items_path = project_.GetProjectPath() + "/data/items.json";
-    if (fs::exists(items_path)) {
-        auto items_raw = DataManager::Get().LoadJsonRaw(items_path);
-        if (items_raw) {
-            auto db = ItemDatabase::FromJson(*items_raw);
-            if (db) databases_.item = std::move(*db);
-        }
-    }
-
-    // 加载 Actor 数据库
-    std::string actors_path = project_.GetProjectPath() + "/data/actors.json";
-    if (fs::exists(actors_path)) {
-        auto raw = DataManager::Get().LoadJsonRaw(actors_path);
-        if (raw) {
-            auto db = ActorDatabase::FromJson(*raw);
-            if (db) databases_.actor = std::move(*db);
-        }
-    }
-
-    // 加载 Skill 数据库
-    std::string skills_path = project_.GetProjectPath() + "/data/skills.json";
-    if (fs::exists(skills_path)) {
-        auto raw = DataManager::Get().LoadJsonRaw(skills_path);
-        if (raw) {
-            auto db = SkillDatabase::FromJson(*raw);
-            if (db) databases_.skill = std::move(*db);
-        }
-    }
-
-    // 加载 Enemy 数据库
-    std::string enemies_path = project_.GetProjectPath() + "/data/enemies.json";
-    if (fs::exists(enemies_path)) {
-        auto raw = DataManager::Get().LoadJsonRaw(enemies_path);
-        if (raw) {
-            auto db = EnemyDatabase::FromJson(*raw);
-            if (db) databases_.enemy = std::move(*db);
-        }
-    }
-
-    // 加载 Shop 数据库
-    std::string shops_path = project_.GetProjectPath() + "/data/shops.json";
-    if (fs::exists(shops_path)) {
-        auto raw = DataManager::Get().LoadJsonRaw(shops_path);
-        if (raw) {
-            auto db = ShopDatabase::FromJson(*raw);
-            if (db) databases_.shop = std::move(*db);
-        }
-    }
+    // 加载全部游戏数据库（物品/角色/技能/敌人/商店）
+    databases_.LoadFromDirectory(project_.GetProjectPath() + "/data");
 
     // 加载 start_scene（maps/Map001.json 等）
     EDITOR_LOG("EditorContext::OpenProject loading start_scene=" << (project_.GetManifest() ? project_.GetManifest()->start_scene : "(no manifest)"));

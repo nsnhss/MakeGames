@@ -9,7 +9,7 @@ namespace mg {
 namespace renderer { class RendererContext; class SwapChain; }
 }
 
-namespace mg::editor {
+namespace mg::gameui {
 
 struct MG_ImGuiVulkanConfig {
     SDL_Window*         window = nullptr;
@@ -60,4 +60,4 @@ void MG_VulkanImGui_ProcessEvent(SDL_Window* window, SDL_Event* event,
 void MG_VulkanImGui_Shutdown(renderer::RendererContext& renderer,
                              renderer::SwapChain& swapchain);
 
-} // namespace mg::editor
+} // namespace mg::gameui

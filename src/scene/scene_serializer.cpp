@@ -1,4 +1,5 @@
 #include "scene/scene_serializer.h"
+#include "scene/action_cmd_registry.h"
 #include "scene/world.h"
 #include "scene/component.h"
 #include "scene/components/transform.h"
@@ -160,34 +161,7 @@ static void DeserializeCameraFollowTarget(World* world, EntityID entity, const j
 
 static json SerializeAction(const Action& action) {
     json j;
-    switch (action.cmd) {
-        case ActionCmd::ShowMessage: j["cmd"] = "ShowMessage"; break;
-        case ActionCmd::ShowToast: j["cmd"] = "ShowToast"; break;
-        case ActionCmd::SetVariable: j["cmd"] = "SetVariable"; break;
-        case ActionCmd::SetSelfSwitch: j["cmd"] = "SetSelfSwitch"; break;
-        case ActionCmd::Wait: j["cmd"] = "Wait"; break;
-        case ActionCmd::TransferPlayer: j["cmd"] = "TransferPlayer"; break;
-        case ActionCmd::PlayAnimation: j["cmd"] = "PlayAnimation"; break;
-        case ActionCmd::PlaySound: j["cmd"] = "PlaySound"; break;
-        case ActionCmd::PlayBGM: j["cmd"] = "PlayBGM"; break;
-        case ActionCmd::StopBGM: j["cmd"] = "StopBGM"; break;
-        case ActionCmd::PlayBGS: j["cmd"] = "PlayBGS"; break;
-        case ActionCmd::StopBGS: j["cmd"] = "StopBGS"; break;
-        case ActionCmd::PlayME: j["cmd"] = "PlayME"; break;
-        case ActionCmd::AddItem: j["cmd"] = "AddItem"; break;
-        case ActionCmd::RemoveItem: j["cmd"] = "RemoveItem"; break;
-        case ActionCmd::ShopProcessing: j["cmd"] = "ShopProcessing"; break;
-        case ActionCmd::BattleProcessing: j["cmd"] = "BattleProcessing"; break;
-        case ActionCmd::ShowUI: j["cmd"] = "ShowUI"; break;
-        case ActionCmd::HideUI: j["cmd"] = "HideUI"; break;
-        case ActionCmd::If: j["cmd"] = "If"; break;
-        case ActionCmd::Else: j["cmd"] = "Else"; break;
-        case ActionCmd::EndIf: j["cmd"] = "EndIf"; break;
-        case ActionCmd::Loop: j["cmd"] = "Loop"; break;
-        case ActionCmd::BreakLoop: j["cmd"] = "BreakLoop"; break;
-        case ActionCmd::CallScript: j["cmd"] = "CallScript"; break;
-        default: j["cmd"] = "Unknown"; break;
-    }
+    j["cmd"] = ActionCmdToSerializedName(action.cmd);
     if (!action.text.empty()) j["text"] = action.text;
     if (!action.target.empty()) j["target"] = action.target;
     if (!action.param.empty()) j["param"] = action.param;
@@ -201,31 +175,7 @@ static Action DeserializeAction(const json& j) {
     Action action;
     if (!j.contains("cmd")) return action;
     std::string cmd = j["cmd"].get<std::string>();
-    if (cmd == "ShowMessage") action.cmd = ActionCmd::ShowMessage;
-    else if (cmd == "ShowToast") action.cmd = ActionCmd::ShowToast;
-    else if (cmd == "SetVariable") action.cmd = ActionCmd::SetVariable;
-    else if (cmd == "SetSelfSwitch") action.cmd = ActionCmd::SetSelfSwitch;
-    else if (cmd == "Wait") action.cmd = ActionCmd::Wait;
-    else if (cmd == "TransferPlayer") action.cmd = ActionCmd::TransferPlayer;
-    else if (cmd == "PlayAnimation") action.cmd = ActionCmd::PlayAnimation;
-    else if (cmd == "PlaySound") action.cmd = ActionCmd::PlaySound;
-    else if (cmd == "PlayBGM") action.cmd = ActionCmd::PlayBGM;
-    else if (cmd == "StopBGM") action.cmd = ActionCmd::StopBGM;
-    else if (cmd == "PlayBGS") action.cmd = ActionCmd::PlayBGS;
-    else if (cmd == "StopBGS") action.cmd = ActionCmd::StopBGS;
-    else if (cmd == "PlayME") action.cmd = ActionCmd::PlayME;
-    else if (cmd == "AddItem") action.cmd = ActionCmd::AddItem;
-    else if (cmd == "RemoveItem") action.cmd = ActionCmd::RemoveItem;
-    else if (cmd == "ShopProcessing") action.cmd = ActionCmd::ShopProcessing;
-    else if (cmd == "BattleProcessing") action.cmd = ActionCmd::BattleProcessing;
-    else if (cmd == "ShowUI") action.cmd = ActionCmd::ShowUI;
-    else if (cmd == "HideUI") action.cmd = ActionCmd::HideUI;
-    else if (cmd == "If") action.cmd = ActionCmd::If;
-    else if (cmd == "Else") action.cmd = ActionCmd::Else;
-    else if (cmd == "EndIf") action.cmd = ActionCmd::EndIf;
-    else if (cmd == "Loop") action.cmd = ActionCmd::Loop;
-    else if (cmd == "BreakLoop") action.cmd = ActionCmd::BreakLoop;
-    else if (cmd == "CallScript") action.cmd = ActionCmd::CallScript;
+    ActionCmdFromSerializedName(cmd.c_str(), action.cmd);
 
     if (j.contains("text")) action.text = j["text"].get<std::string>();
     if (j.contains("target")) action.target = j["target"].get<std::string>();

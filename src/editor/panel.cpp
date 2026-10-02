@@ -1,6 +1,6 @@
 #include "panel.h"
 #include "imgui.h"
-#include "debug_log.h"
+#include "core/debug_log.h"
 #include "imgui/mg_imgui_icons.h"
 #include "third_party/json.hpp"
 #include <cstring>

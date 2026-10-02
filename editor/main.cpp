@@ -11,7 +11,7 @@
 #include "src/editor/editor_application.h"
 #include "src/editor/editor_layer.h"
 #include "src/editor/editor_context.h"
-#include "src/editor/debug_log.h"
+#include "core/debug_log.h"
 
 int main(int argc, char** argv)
 {

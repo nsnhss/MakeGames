@@ -3,7 +3,7 @@
 //           Tile/Passage/Terrain 绘制（帧末 flush 进 Undo 栈）、实体放置、
 //           底部浮动工具栏（Gizmo 模式 + ViewMode）。
 // Play Mode：标题画面、暂停菜单（存档槽位/物品/状态）、对话框/选项、Toast、
-//            Fade 遮罩、HUD；商店/战斗覆盖层见 viewport_panel_playmode.cpp。
+//            Fade 遮罩、商店/战斗、HUD（覆盖层 UI 实现见 gameui/playmode_ui.*，与 game.exe 共用）。
 #include "viewport_panel.h"
 #include "tile_autotile.h"
 #include "src/editor/editor_context.h"
@@ -11,6 +11,7 @@
 #include "src/editor/imgui/mg_imgui_extensions.h"
 #include "src/editor/imgui/mg_imgui_panel.h"
 #include "scene/scene.h"
+#include "scene/constants.h"
 #include "scene/world.h"
 #include "scene/components/transform.h"
 #include "scene/components/name.h"
@@ -263,7 +264,7 @@ void ViewportPanel::Draw() {
         if (pick_allowed && hovered && mouse_valid &&
             gizmo_.mode == GizmoState::Idle &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            scene::EntityID hit = PickEntityAt(world, mouse_wx, mouse_wy, 16.0f);
+            scene::EntityID hit = PickEntityAt(world, mouse_wx, mouse_wy, scene::kPickRadius);
             if (hit != 0) ctx.SelectEntity(hit);
             else ctx.ClearSelection();
         }
@@ -272,7 +273,7 @@ void ViewportPanel::Draw() {
         static math::Vec2 rc_world_pos{0.0f, 0.0f}; // 右键点击处世界坐标（Create 用）
         if (pick_allowed && hovered && mouse_valid &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            rc_target_entity_ = PickEntityAt(world, mouse_wx, mouse_wy, 16.0f);
+            rc_target_entity_ = PickEntityAt(world, mouse_wx, mouse_wy, scene::kPickRadius);
             rc_on_entity_ = (rc_target_entity_ != 0);
             rc_world_pos = {mouse_wx, mouse_wy};
             if (rc_on_entity_) ctx.SelectEntity(rc_target_entity_);
@@ -630,281 +631,52 @@ void ViewportPanel::Draw() {
     }
 
     // =======================================================================
-    // Play Mode
+    // Play Mode（覆盖层 UI 已提取到 gameui/playmode_ui.*，与 game.exe 共用）
     // =======================================================================
     auto* event_system = ctx.GetEventSystem();
     const bool in_game = (state == PlayState::Playing &&
                           ctx.GetScreenMode() == EditorContext::ScreenMode::Game);
 
-    // ---- 9. Escape：Playing ↔ Paused ----
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        if (in_game) {
-            ctx.SetPlayState(PlayState::Paused);
-            pause_sub_ = PauseSub::None;
-        } else if (state == PlayState::Paused) {
-            ctx.SetPlayState(PlayState::Playing);
-            pause_sub_ = PauseSub::None;
-        }
-    }
-    if (state != PlayState::Paused) pause_sub_ = PauseSub::None;
+    // Escape 暂停切换已下沉 GameRuntime；此处仅维护子菜单状态复位
+    if (state != PlayState::Paused) pause_sub_ = gameui::PauseSub::None;
 
-    // ---- 10. Fade 过渡遮罩 ----
-    if (state != PlayState::Edit) {
-        float fade = ctx.GetFadeAlpha();
-        if (fade > 0.0f) {
-            int alpha = (int)(std::clamp(fade, 0.0f, 1.0f) * 255.0f);
-            dl->AddRectFilled(img_min, img_max, IM_COL32(0, 0, 0, alpha));
-        }
-    }
+    // 组装共享 UI 输入
+    gameui::PlayUIContext pui;
+    pui.es = event_system;
+    pui.dbs = &ctx.GetDatabases();
+    pui.play_mode = &ctx.GetPlayMode();
+    pui.dl = dl;
+    pui.view_min = img_min;
+    pui.view_max = img_max;
+    pui.fade_alpha = ctx.GetFadeAlpha();
+    if (const auto* manifest = ctx.GetProjectManifest())
+        if (!manifest->name.empty()) pui.game_title = manifest->name.c_str();
+    pui.project_root = ctx.GetProjectPath();
+    pui.on_exit = [&ctx]() { ctx.SetPlayState(PlayState::Edit); };
+    pui.exit_label = "Exit to Editor";
+    pui.cam_pos = cam_pos;
+    pui.cam_zoom = zoom;
 
-    // ---- 11. 标题画面 ----
+    // ---- Fade 过渡遮罩 ----
+    if (state != PlayState::Edit) gameui::DrawFadeOverlay(pui);
+
+    // ---- 标题画面 ----
     if (state == PlayState::Playing &&
         ctx.GetScreenMode() == EditorContext::ScreenMode::Title) {
-        dl->AddRectFilled(img_min, img_max, IM_COL32(10, 12, 20, 235));
-
-        const auto* manifest = ctx.GetProjectManifest();
-        const char* title = (manifest && !manifest->name.empty())
-            ? manifest->name.c_str() : "MakeGames";
-        ImVec2 ts = ImGui::CalcTextSize(title);
-        float title_x = img_min.x + (img_w - ts.x * 2.0f) * 0.5f;
-        // 放大标题（用两枚阴影偏移模拟加重）
-        ImGui::SetCursorScreenPos(ImVec2(title_x, img_min.y + img_h * 0.25f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.5f, 1.0f));
-        ImGui::SetWindowFontScale(2.0f);
-        ImGui::TextUnformatted(title);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopStyleColor();
-
-        constexpr float kBtnW = 200.0f;
-        constexpr float kBtnH = 34.0f;
-        float bx = img_min.x + (img_w - kBtnW) * 0.5f;
-        float by = img_min.y + img_h * 0.45f;
-        ImGui::SetCursorScreenPos(ImVec2(bx, by));
-        if (ImGui::Button("Start New Game", ImVec2(kBtnW, kBtnH)))
-            ctx.RequestStartNewGame();
-        ImGui::SetCursorScreenPos(ImVec2(bx, by + kBtnH + 10.0f));
-        if (ImGui::Button("Continue", ImVec2(kBtnW, kBtnH)))
-            ctx.RequestContinueGame();
-        ImGui::SetCursorScreenPos(ImVec2(bx, by + 2 * (kBtnH + 10.0f)));
-        if (ImGui::Button("Exit to Editor", ImVec2(kBtnW, kBtnH)))
-            ctx.SetPlayState(PlayState::Edit);
+        gameui::DrawTitleScreen(pui);
     }
 
-    // ---- 12. 暂停菜单 ----
-    if (state == PlayState::Paused) {
-        dl->AddRectFilled(img_min, img_max, IM_COL32(0, 0, 0, 150));
+    // ---- 暂停菜单 ----
+    if (state == PlayState::Paused) gameui::DrawPauseMenu(pui, pause_sub_);
 
-        constexpr float kBoxW = 260.0f;
-        float box_h = 0.0f;
-        switch (pause_sub_) {
-            case PauseSub::None:      box_h = 6 * 34.0f + 40.0f; break;
-            case PauseSub::SaveSlots:
-            case PauseSub::LoadSlots: box_h = 4 * 34.0f + 44.0f; break;
-            case PauseSub::Items:
-            case PauseSub::Status:    box_h = 240.0f; break;
-        }
-        ImVec2 bp(img_min.x + (img_w - kBoxW) * 0.5f, img_min.y + (img_h - box_h) * 0.5f);
-        dl->AddRectFilled(bp, ImVec2(bp.x + kBoxW, bp.y + box_h), IM_COL32(25, 30, 45, 245), 10.0f);
-        dl->AddRect(bp, ImVec2(bp.x + kBoxW, bp.y + box_h), IM_COL32(100, 110, 140, 255), 10.0f);
-
-        float bx = bp.x + 20.0f;
-        float bw = kBoxW - 40.0f;
-        float by = bp.y + 16.0f;
-        auto menu_button = [&](const char* label) {
-            ImGui::SetCursorScreenPos(ImVec2(bx, by));
-            by += 34.0f;
-            return ImGui::Button(label, ImVec2(bw, 28.0f));
-        };
-
-        if (pause_sub_ == PauseSub::None) {
-            if (menu_button("Resume"))         ctx.SetPlayState(PlayState::Playing);
-            if (menu_button("Save"))           pause_sub_ = PauseSub::SaveSlots;
-            if (menu_button("Load"))           pause_sub_ = PauseSub::LoadSlots;
-            if (menu_button("Items"))          pause_sub_ = PauseSub::Items;
-            if (menu_button("Status"))         pause_sub_ = PauseSub::Status;
-            if (menu_button("Exit to Editor")) ctx.SetPlayState(PlayState::Edit);
-        } else if (pause_sub_ == PauseSub::SaveSlots || pause_sub_ == PauseSub::LoadSlots) {
-            const bool is_save = (pause_sub_ == PauseSub::SaveSlots);
-            for (int slot = 1; slot <= 3; ++slot) {
-                auto info = ctx.ReadSaveSlotInfo(slot);
-                std::string label = "Slot " + std::to_string(slot);
-                if (info.exists) {
-                    label += "  " + info.scene_name;
-                    if (!info.last_save_time.empty())
-                        label += "  (" + info.last_save_time + ")";
-                } else {
-                    label += "  (Empty)";
-                }
-                bool clickable = is_save || info.exists;
-                if (!clickable) ImGui::BeginDisabled();
-                if (menu_button(label.c_str())) {
-                    if (is_save) ctx.RequestSaveToSlot(slot);
-                    else         ctx.RequestLoadFromSlot(slot);
-                    pause_sub_ = PauseSub::None;
-                }
-                if (!clickable) ImGui::EndDisabled();
-            }
-            if (menu_button("Back")) pause_sub_ = PauseSub::None;
-        } else if (pause_sub_ == PauseSub::Items) {
-            ImGui::SetCursorScreenPos(ImVec2(bx, by));
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Items");
-            by += 26.0f;
-            if (event_system) {
-                auto items = event_system->GetInventoryItems();
-                const auto& item_db = ctx.GetItemDatabase();
-                for (const auto& [id, count] : items) {
-                    const auto* def = item_db.Find(id);
-                    std::string name = def ? def->name : id;
-                    ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    ImGui::Text("%s x%d", name.c_str(), count);
-                    by += 22.0f;
-                }
-                if (items.empty()) {
-                    ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    ImGui::TextDisabled("(Empty)");
-                    by += 22.0f;
-                }
-            }
-            ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + box_h - 38.0f));
-            if (ImGui::Button("Back", ImVec2(bw, 28.0f))) pause_sub_ = PauseSub::None;
-        } else { // Status（占位：HP/MP/Gold）
-            ImGui::SetCursorScreenPos(ImVec2(bx, by));
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Status");
-            by += 28.0f;
-            int hp = event_system ? event_system->GetVariableInt("hp") : 0;
-            int mp = event_system ? event_system->GetVariableInt("mp") : 0;
-            int gold = event_system ? event_system->GetVariableInt("gold") : 0;
-            ImGui::SetCursorScreenPos(ImVec2(bx, by));        ImGui::Text("HP:   %d", hp);
-            ImGui::SetCursorScreenPos(ImVec2(bx, by + 24));   ImGui::Text("MP:   %d", mp);
-            ImGui::SetCursorScreenPos(ImVec2(bx, by + 48));   ImGui::Text("Gold: %d", gold);
-            ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + box_h - 38.0f));
-            if (ImGui::Button("Back", ImVec2(bw, 28.0f))) pause_sub_ = PauseSub::None;
-        }
-    }
-
-    // ---- 13. Toast 浮动提示 ----
-    if (in_game && event_system) {
-        for (const auto& toast : event_system->GetToasts()) {
-            float a = std::clamp(toast.timer / 0.5f, 0.0f, 1.0f);
-            ImVec2 p = WorldToScreen(toast.world_pos.x, toast.world_pos.y + 24.0f,
-                                     img_min, img_max, cam_pos, zoom, (float)vp_w, (float)vp_h);
-            ImVec2 ts = ImGui::CalcTextSize(toast.text.c_str());
-            p.x -= ts.x * 0.5f;
-            dl->AddText(ImVec2(p.x + 1, p.y + 1), IM_COL32(0, 0, 0, (int)(180 * a)),
-                        toast.text.c_str());
-            dl->AddText(p, IM_COL32(255, 240, 180, (int)(255 * a)), toast.text.c_str());
-        }
-    }
-
-    // ---- 14. 对话框 / 选项 ----
-    if (in_game && event_system && event_system->HasPendingMessage()) {
-        float box_w = img_w - 32.0f;
-        float box_h = 110.0f;
-        ImVec2 bp(img_min.x + 16.0f, img_max.y - box_h - 16.0f);
-        dl->AddRectFilled(bp, ImVec2(bp.x + box_w, bp.y + box_h), IM_COL32(20, 24, 36, 235), 8.0f);
-        dl->AddRect(bp, ImVec2(bp.x + box_w, bp.y + box_h), IM_COL32(90, 100, 130, 255), 8.0f);
-
-        float text_y = bp.y + 12.0f;
-        const std::string& speaker_id = event_system->GetPendingMessageName();
-        if (!speaker_id.empty()) {
-            std::string speaker = speaker_id;
-            if (const auto* actor = ctx.GetActorDatabase().Find(speaker_id))
-                speaker = actor->name;
-            ImGui::SetCursorScreenPos(ImVec2(bp.x + 14.0f, bp.y + 8.0f));
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", speaker.c_str());
-            ImVec2 ns = ImGui::CalcTextSize(speaker.c_str());
-            dl->AddLine(ImVec2(bp.x + 14.0f, bp.y + 28.0f),
-                        ImVec2(bp.x + 14.0f + ns.x, bp.y + 28.0f),
-                        IM_COL32(1.0f * 255, 0.85f * 255, 0.3f * 255, 160));
-            text_y = bp.y + 34.0f;
-        }
-        ImGui::SetCursorScreenPos(ImVec2(bp.x + 14.0f, text_y));
-        ImGui::PushTextWrapPos(bp.x + box_w - 14.0f);
-        ImGui::TextUnformatted(event_system->GetPendingMessage().c_str());
-        ImGui::PopTextWrapPos();
-
-        // 继续提示
-        ImGui::SetCursorScreenPos(ImVec2(bp.x + box_w - 60.0f, bp.y + box_h - 22.0f));
-        ImGui::TextDisabled("[Enter]");
-
-        bool clicked_in_box = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            mouse.x >= bp.x && mouse.x <= bp.x + box_w &&
-            mouse.y >= bp.y && mouse.y <= bp.y + box_h;
-        if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || clicked_in_box)
-            event_system->AcknowledgeMessage();
-    }
-    if (in_game && event_system && event_system->IsChoiceActive()) {
-        const auto& choices = event_system->GetChoices();
-        float cw = 220.0f;
-        float ch = (float)choices.size() * 30.0f + 16.0f;
-        if (!event_system->GetChoiceLabel().empty()) ch += 24.0f;
-        ImVec2 cp(img_max.x - cw - 24.0f, img_max.y - ch - 140.0f);
-        dl->AddRectFilled(cp, ImVec2(cp.x + cw, cp.y + ch), IM_COL32(20, 24, 36, 240), 8.0f);
-        dl->AddRect(cp, ImVec2(cp.x + cw, cp.y + ch), IM_COL32(90, 100, 130, 255), 8.0f);
-        float cy = cp.y + 8.0f;
-        if (!event_system->GetChoiceLabel().empty()) {
-            ImGui::SetCursorScreenPos(ImVec2(cp.x + 12.0f, cy));
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s",
-                               event_system->GetChoiceLabel().c_str());
-            cy += 24.0f;
-        }
-        for (int i = 0; i < (int)choices.size(); ++i) {
-            ImGui::SetCursorScreenPos(ImVec2(cp.x + 12.0f, cy));
-            ImGui::PushID(i);
-            if (ImGui::Button(choices[i].c_str(), ImVec2(cw - 24.0f, 26.0f)))
-                event_system->AcknowledgeChoice(i);
-            ImGui::PopID();
-            cy += 30.0f;
-        }
-    }
-
-    // ---- 15. 商店 / 战斗覆盖层（viewport_panel_playmode.cpp）----
-    DrawShopOverlay();
-    DrawBattleOverlay();
-
-    // ---- 16. HUD overlays（status 左上 / inventory 左下 / title 顶部居中）----
-    if (in_game && event_system) {
-        float stack_y = img_min.y + 12.0f; // 未知名称依次下排
-        for (const auto& [name, ov] : event_system->GetHUDOverlays()) {
-            if (!ov.visible) continue;
-
-            // 内容行
-            std::vector<std::string> lines;
-            if (!ov.text.empty()) lines.push_back(ov.text);
-            if (name == "inventory") {
-                const auto& item_db = ctx.GetItemDatabase();
-                for (const auto& [id, count] : event_system->GetInventoryItems()) {
-                    const auto* def = item_db.Find(id);
-                    lines.push_back((def ? def->name : id) + " x" + std::to_string(count));
-                }
-            }
-            if (lines.empty()) continue;
-
-            float max_w = 0.0f;
-            for (const auto& l : lines)
-                max_w = std::max(max_w, ImGui::CalcTextSize(l.c_str()).x);
-            float box_w = max_w + 20.0f;
-            float box_h = (float)lines.size() * 20.0f + 12.0f;
-
-            ImVec2 bp;
-            if (name == "inventory")
-                bp = ImVec2(img_min.x + 12.0f, img_max.y - box_h - 12.0f);
-            else if (name == "title")
-                bp = ImVec2(img_min.x + (img_w - box_w) * 0.5f, img_min.y + 12.0f);
-            else if (name == "status")
-                bp = ImVec2(img_min.x + 12.0f, img_min.y + 12.0f);
-            else {
-                bp = ImVec2(img_min.x + 12.0f, stack_y);
-                stack_y += box_h + 8.0f;
-            }
-
-            dl->AddRectFilled(bp, ImVec2(bp.x + box_w, bp.y + box_h),
-                              IM_COL32(0, 0, 0, 140), 6.0f);
-            for (size_t i = 0; i < lines.size(); ++i) {
-                dl->AddText(ImVec2(bp.x + 10.0f, bp.y + 6.0f + (float)i * 20.0f),
-                            IM_COL32(255, 255, 255, 230), lines[i].c_str());
-            }
-        }
+    // ---- Toast / 对话框 / 选项 / 商店 / 战斗 / HUD ----
+    if (in_game) {
+        gameui::DrawToasts(pui);
+        gameui::DrawDialog(pui, mouse);
+        gameui::DrawChoices(pui);
+        gameui::DrawShopOverlay(pui);
+        gameui::DrawBattleOverlay(pui);
+        gameui::DrawHUDOverlays(pui);
     }
 
     // ---- 17. Undo flush：帧内收集的绘制变化推入命令栈 ----

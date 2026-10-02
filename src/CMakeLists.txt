@@ -12,6 +12,8 @@ add_library(engine_runtime STATIC
     resource/skill_database.cpp
     resource/enemy_database.cpp
     resource/shop_database.cpp
+    resource/game_databases.cpp
+    resource/vfs.cpp
     resource/spritesheet_grid.cpp
     core/log.cpp
     core/timer.cpp
@@ -21,6 +23,7 @@ add_library(engine_runtime STATIC
     renderer/buffer.cpp
     renderer/pipeline.cpp
     renderer/descriptor.cpp
+    renderer/sprite_pipeline_setup.cpp
     renderer/texture.cpp
     app/layer_stack.cpp
     app/application.cpp
@@ -29,6 +32,8 @@ add_library(engine_runtime STATIC
     scene/event_system.cpp
     scene/event_system_battle.cpp
     scene/event_system_shop.cpp
+    scene/play_mode_controller.cpp
+    scene/game_runtime.cpp
     scene/scene_serializer.cpp
     scene/systems/camera_system.cpp
     scene/systems/collision_merge.cpp
@@ -36,6 +41,7 @@ add_library(engine_runtime STATIC
     scene/systems/sprite_render_system.cpp
     scene/systems/sprite_batch_builder.cpp
     scene/systems/tilemap_render_system.cpp
+    scene/systems/tilemap_mesh_builder.cpp
     scene/systems/animator_system.cpp
     scene/systems/tween_animation_system.cpp
     scene/systems/tile_animation.cpp
@@ -65,10 +71,8 @@ target_link_libraries(engine_runtime PUBLIC
 # mg_imgui_backend.cpp 依赖 Vulkan + SDL2，需要链接 ${MG_LINK_LIBS}
 # ---------------------------------------------------------------------------
 add_library(engine_editor STATIC
-    editor/imgui/mg_imgui_theme.cpp
     editor/imgui/mg_imgui_extensions.cpp
     editor/imgui/mg_imgui_panel.cpp
-    editor/imgui/mg_imgui_backend.cpp
     editor/file_dialog.cpp
 )
 
@@ -84,6 +88,26 @@ target_link_libraries(engine_editor PUBLIC
 )
 
 # ---------------------------------------------------------------------------
+# engine_gameui：Play Mode 覆盖层 UI + ImGui 本体 + Vulkan/SDL2 后端
+# editor（Viewport 内嵌）与 game.exe（全窗口）共用
+# ---------------------------------------------------------------------------
+add_library(engine_gameui STATIC
+    ${IMGUI_SOURCES}
+    gameui/mg_imgui_backend.cpp
+    gameui/mg_imgui_theme.cpp
+    gameui/playmode_ui.cpp
+)
+
+target_include_directories(engine_gameui PUBLIC
+    ${MG_INCLUDE_DIRS}
+)
+
+target_link_libraries(engine_gameui PUBLIC
+    engine_runtime
+    ${MG_LINK_LIBS}
+)
+
+# ---------------------------------------------------------------------------
 # game.exe：独立游戏运行时入口
 # ---------------------------------------------------------------------------
 add_executable(game game_main.cpp)
@@ -94,6 +118,7 @@ target_include_directories(game PRIVATE
 
 target_link_libraries(game PRIVATE
     engine_runtime
+    engine_gameui
     ${LUA_TARGET}
 )
 
@@ -117,4 +142,11 @@ add_custom_command(TARGET game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets/shaders
     $<TARGET_FILE_DIR:game>/assets/shaders
+)
+
+# 构建后复制字体资源（MG_LoadFonts 需要 fa-solid-900.ttf）
+add_custom_command(TARGET game POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/assets/fonts
+    $<TARGET_FILE_DIR:game>/assets/fonts
 )

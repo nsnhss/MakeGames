@@ -26,6 +26,7 @@ target_link_directories(launcher PRIVATE
 target_link_libraries(launcher PRIVATE
     engine_runtime
     engine_editor
+    engine_gameui
     ${LUA_TARGET}
 )
 

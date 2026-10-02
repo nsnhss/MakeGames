@@ -2,6 +2,7 @@
 #include "editor/editor_context.h"
 #include "core/log.h"
 #include "resource/data_manager.h"
+#include "resource/vfs.h"
 #include "resource/schema/project_schema.h"
 #include "scene/scene.h"
 #include "scene/scene_serializer.h"
@@ -15,6 +16,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <vector>
 #include <set>
 #include <string>
@@ -37,14 +39,6 @@ namespace editor {
 namespace fs = std::filesystem;
 
 namespace {
-
-std::string WideToUtf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    int size = ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s(size, 0);
-    ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), size, nullptr, nullptr);
-    return s;
-}
 
 std::string GetEditorExeDirectory() {
 #ifdef _WIN32
@@ -143,7 +137,7 @@ void CollectSceneDependencies(scene::Scene* scene,
 
 } // namespace
 
-bool ExportGame(EditorContext& ctx, const std::string& output_dir) {
+bool ExportGame(EditorContext& ctx, const std::string& output_dir, bool pack_resources) {
     namespace fs = std::filesystem;
 
     if (output_dir.empty()) {
@@ -175,10 +169,22 @@ bool ExportGame(EditorContext& ctx, const std::string& output_dir) {
         // 1. 保存当前项目（确保场景/索引最新）
         ctx.SaveProject();
 
-        // 2. 复制整个项目目录到输出目录（保留 data/、maps/、assets/ 结构）
-        if (!CopyDirectoryRecursively(project_path, out)) {
-            MG_LOG_ERROR("ExportGame: failed to copy project data");
-            return false;
+        // 2. 白名单复制项目内容（排除 imgui.ini / saves/ / .cache/ 等编辑器运行时产物）
+        const std::vector<std::string> whitelist = {
+            "project.json", "maps", "data", "assets", "prefabs", "scenes"
+        };
+        for (const auto& item : whitelist) {
+            fs::path src = fs::path(project_path) / item;
+            if (!fs::exists(src)) continue;
+            if (fs::is_directory(src)) {
+                if (!CopyDirectoryRecursively(src, out / item)) {
+                    MG_LOG_ERROR("ExportGame: failed to copy " << item);
+                    return false;
+                }
+            } else if (!CopyFileIfExists(src, out / item)) {
+                MG_LOG_ERROR("ExportGame: failed to copy " << item);
+                return false;
+            }
         }
 
         // 3. 收集并校验资源依赖（日志输出，便于排查缺失资源）
@@ -257,12 +263,45 @@ bool ExportGame(EditorContext& ctx, const std::string& output_dir) {
             }
         }
 
-        // 复制引擎内置资源（着色器）
+        // 复制引擎内置资源（着色器 + 字体；game.exe 的 ImGui 覆盖层需要 fa-solid-900.ttf）
         fs::path editor_shaders = editor_dir_p / "assets" / "shaders";
         if (fs::exists(editor_shaders)) {
             CopyDirectoryRecursively(editor_shaders, out / "assets" / "shaders");
         } else {
             MG_LOG_ERROR("ExportGame: engine shaders not found at " << editor_shaders.string());
+        }
+        fs::path editor_fonts = editor_dir_p / "assets" / "fonts";
+        if (fs::exists(editor_fonts)) {
+            CopyDirectoryRecursively(editor_fonts, out / "assets" / "fonts");
+        } else {
+            MG_LOG_ERROR("ExportGame: engine fonts not found at " << editor_fonts.string());
+        }
+
+        // 6. 可选：资源打包为 data.pak（输出根只留可执行文件 + DLL + pak）
+        if (pack_resources) {
+            const std::set<std::string> keep_loose = {"game.exe", "SDL2.dll", "vulkan-1.dll", "data.pak"};
+            std::vector<std::string> rel_paths;
+            for (const auto& entry : fs::recursive_directory_iterator(out)) {
+                if (!entry.is_regular_file()) continue;
+                std::string rel = fs::relative(entry.path(), out).generic_string();
+                if (keep_loose.contains(rel)) continue;
+                rel_paths.push_back(std::move(rel));
+            }
+            std::sort(rel_paths.begin(), rel_paths.end());
+            if (!vfs::WritePak(out.string(), rel_paths, (out / "data.pak").string())) {
+                MG_LOG_ERROR("ExportGame: failed to write data.pak");
+                return false;
+            }
+            // 删除已入包的松散文件与项目目录（只留 exe/dll/pak）
+            for (const auto& rel : rel_paths) {
+                std::error_code ec;
+                fs::remove(out / rel, ec);
+            }
+            for (const auto& item : whitelist) {
+                std::error_code ec;
+                fs::remove_all(out / item, ec);
+            }
+            MG_LOG_INFO("ExportGame: packed " << rel_paths.size() << " files into data.pak");
         }
 
         MG_LOG_INFO("ExportGame: success -> " << out.string());

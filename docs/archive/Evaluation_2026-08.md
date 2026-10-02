@@ -2,7 +2,7 @@
 
 > 本次评估覆盖全部计划文档（docs/ 9 份）与全部自有代码（src/ + editor/ + launcher/，143 文件约 16,900 行）。
 > 构建验证：三个可执行目标（game / editor / launcher）全部编译通过。
-> 本文档配套的整改方案分 6 个阶段（A 文档 → B 清理 → C 工程化 → D 功能补全 → E 测试 → F EditorContext 拆分），执行进度回填到 [`Progress.md`](Progress.md)。
+> 本文档配套的整改方案分 6 个阶段（A 文档 → B 清理 → C 工程化 → D 功能补全 → E 测试 → F EditorContext 拆分），执行进度回填到 [`Progress.md`](../Progress.md)。
 
 ---
 

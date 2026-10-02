@@ -1,61 +1,21 @@
 #include "texture.h"
 #include "renderer_utils.h"
 #include "buffer.h"
+#include "resource/vfs.h"
 #include <cstring>
 #include <fstream>
 #include <vector>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/stb_image.h"
 
 namespace {
 
-#ifdef _WIN32
-static std::wstring Utf8ToWide(const char* utf8) {
-    if (!utf8 || !utf8[0]) return {};
-    int len = ::MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
-    if (len <= 0) return {};
-    std::wstring w(len - 1, 0);
-    ::MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w.data(), len);
-    return w;
-}
-#endif
-
+// 文件读取统一走 VFS（pak 命中读包，否则落盘；中文路径兼容在 vfs 内处理）
 static std::vector<uint8_t> ReadFileBytes(const char* path) {
-#ifdef _WIN32
-    // 用 Win32 宽字符 API 打开文件，避免 MinGW libstdc++ wifstream 对 UTF-8 中文路径的兼容性问题
-    std::wstring wpath = Utf8ToWide(path);
-    HANDLE h = ::CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return {};
-    LARGE_INTEGER size_li;
-    if (!::GetFileSizeEx(h, &size_li)) {
-        ::CloseHandle(h);
-        return {};
-    }
-    size_t size = static_cast<size_t>(size_li.QuadPart);
-    std::vector<uint8_t> buffer(size);
-    DWORD read = 0;
-    BOOL ok = ::ReadFile(h, buffer.data(), static_cast<DWORD>(size), &read, nullptr);
-    ::CloseHandle(h);
-    if (!ok || read != size) return {};
+    std::vector<uint8_t> buffer;
+    if (!path || !mg::vfs::ReadFile(path, buffer)) return {};
     return buffer;
-#else
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    auto size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> buffer(static_cast<size_t>(size));
-    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) return {};
-    return buffer;
-#endif
 }
 
 } // namespace

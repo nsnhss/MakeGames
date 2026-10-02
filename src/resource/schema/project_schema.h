@@ -5,15 +5,22 @@
 
 namespace mg {
 
+// 默认地图尺寸 / 瓦片尺寸 / 窗口分辨率（新建项目与场景、game.exe 回退共用，D0-7）
+inline constexpr int kDefaultMapWidth = 20;
+inline constexpr int kDefaultMapHeight = 15;
+inline constexpr int kDefaultTileSize = 32;
+inline constexpr int kDefaultDisplayWidth = 1280;
+inline constexpr int kDefaultDisplayHeight = 720;
+
 // 项目清单（project.json）
 struct ProjectManifest {
     std::string name;
     std::string engine_version = "0.1.0";
     std::string mode = "2d_topdown";   // "2d_topdown" | "2d_sidescroller"
     std::string start_scene;           // 相对路径，如 "maps/Map001.json"
-    int tile_size = 32;
-    int display_width = 1280;
-    int display_height = 720;
+    int tile_size = kDefaultTileSize;
+    int display_width = kDefaultDisplayWidth;
+    int display_height = kDefaultDisplayHeight;
 
     static std::optional<ProjectManifest> FromJson(const nlohmann::json& j) {
         if (!j.is_object()) return std::nullopt;
@@ -22,11 +29,11 @@ struct ProjectManifest {
         m.engine_version = j.value("engine_version", "0.1.0");
         m.mode = j.value("mode", "2d_topdown");
         m.start_scene = j.value("start_scene", "");
-        m.tile_size = j.value("tile_size", 32);
+        m.tile_size = j.value("tile_size", kDefaultTileSize);
         if (j.contains("display")) {
             const auto& d = j["display"];
-            m.display_width = d.value("width", 1280);
-            m.display_height = d.value("height", 720);
+            m.display_width = d.value("width", kDefaultDisplayWidth);
+            m.display_height = d.value("height", kDefaultDisplayHeight);
         }
         if (m.name.empty()) return std::nullopt;
         return m;

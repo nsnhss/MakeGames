@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include "core/math/vec2.h"
+#include "resource/schema/project_schema.h"
 #include "scene/scene.h"
 #include "scene/entity.h"
 
@@ -34,7 +35,7 @@ public:
     scene::World* GetWorld() const;
 
     // 创建空场景（最小骨架：Tilemap + Camera + Player），无硬编码内容
-    void CreateDefaultScene(int w = 20, int h = 15, int tile_size = 32);
+    void CreateDefaultScene(int w = kDefaultMapWidth, int h = kDefaultMapHeight, int tile_size = kDefaultTileSize);
 
     // ---- 实体模板（Create 菜单用）----
     enum class EntityTemplate {
@@ -63,7 +64,7 @@ public:
 
     // ---- 多地图管理 ----
     bool SwitchScene(const std::string& map_name);          // 保存当前场景并切换到目标场景
-    bool CreateAndSaveNewScene(const std::string& name, int w = 20, int h = 15, int tile_size = 32);    // 创建并保存新场景，失败时回滚
+    bool CreateAndSaveNewScene(const std::string& name, int w = kDefaultMapWidth, int h = kDefaultMapHeight, int tile_size = kDefaultTileSize);    // 创建并保存新场景，失败时回滚
     bool RenameScene(const std::string& old_name, const std::string& new_name);
     bool DeleteScene(const std::string& name);
 

@@ -1,0 +1,14 @@
+[
+    {
+        "id": "potion",
+        "name": "生命药水",
+        "description": "恢复 30 HP",
+        "price": 50
+    },
+    {
+        "id": "bomb",
+        "name": "炸弹",
+        "description": "造成范围伤害",
+        "price": 80
+    }
+]

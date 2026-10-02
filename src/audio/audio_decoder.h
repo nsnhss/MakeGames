@@ -20,5 +20,9 @@ AudioCodec DetectAudioCodec(const std::string& path);
 bool DecodeAudioFile(const std::string& path, std::vector<int16_t>& out_pcm,
                      int& out_sample_rate, int& out_channels);
 
+// 内存版（pak 打包后无磁盘文件）：path 仅用于按扩展名分派与日志
+bool DecodeAudioMemory(const std::string& path, const std::vector<uint8_t>& bytes,
+                       std::vector<int16_t>& out_pcm, int& out_sample_rate, int& out_channels);
+
 } // namespace audio
 } // namespace mg

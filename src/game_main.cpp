@@ -1,3 +1,6 @@
+// game_main.cpp — 独立游戏运行时（game.exe）。
+// 布局约定（与导出对齐）：cwd = 导出根目录，project.json 在根，场景在 maps/，数据库在 data/。
+// Play Mode 编排复用 scene::GameRuntime（与编辑器同源），覆盖层 UI 复用 gameui::（playmode_ui）。
 #include "app/application.h"
 #include "core/log.h"
 #include "renderer/renderer_context.h"
@@ -6,9 +9,12 @@
 #include "renderer/buffer.h"
 #include "renderer/pipeline.h"
 #include "renderer/descriptor.h"
+#include "renderer/sprite_pipeline_setup.h"
 #include "renderer/texture.h"
 #include "resource/resource_manager.h"
 #include "resource/data_manager.h"
+#include "resource/game_databases.h"
+#include "resource/vfs.h"
 #include "resource/schema/project_schema.h"
 #include "audio/audio_manager.h"
 #include "scene/scene.h"
@@ -22,18 +28,23 @@
 #include "scene/systems/sprite_vertex_layout.h"
 #include "scene/systems/tilemap_render_system.h"
 #include "scene/systems/camera_system.h"
-#include "scene/systems/animator_system.h"
-#include "scene/systems/tween_animation_system.h"
 #include "scene/systems/tile_animation.h"
+#include "scene/systems/tilemap_mesh_builder.h"
+#include "scene/game_runtime.h"
+#include "gameui/playmode_ui.h"
+#include "gameui/mg_imgui_backend.h"
 #include "third_party/json.hpp"
 
 #include <SDL.h>
 #include <SDL_vulkan.h>
 #include <vulkan/vulkan.h>
+#include <imgui.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <fstream>
 #include <filesystem>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <cstring>
 
@@ -49,32 +60,64 @@ namespace game {
 
 namespace fs = std::filesystem;
 
-// 从文件加载 SPIR-V（game.exe 不继承 editor 的 LoadSpvFile）
+// 从 VFS 加载 SPIR-V（pak 命中读包，否则落盘）
 static std::vector<uint32_t> LoadSpvFile(const char* path) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    if (!f) return {};
-    auto size = f.tellg();
-    f.seekg(0, std::ios::beg);
-    std::vector<char> buffer(static_cast<size_t>(size));
-    if (!f.read(buffer.data(), size)) return {};
-    std::vector<uint32_t> data(size / 4);
-    std::memcpy(data.data(), buffer.data(), data.size() * 4);
+    std::vector<uint8_t> bytes;
+    if (!vfs::ReadFile(path, bytes)) return {};
+    std::vector<uint32_t> data(bytes.size() / 4);
+    std::memcpy(data.data(), bytes.data(), data.size() * 4);
     return data;
 }
 
-class GameApplication : public Application {
-public:
-    GameApplication() : Application(Desc{
-        .title = "MakeGames Runtime",
-        .width = 1280,
-        .height = 720,
-        .maximized = false,
-        .resizable = true,
-        .high_dpi = true,
-        .sdl_flags = SDL_WINDOW_VULKAN
-    }) {}
+// 挂载 data.pak（若存在）；MakeDesc 与 OnInit 都可能在首位调用，幂等
+static void EnsurePakMounted() {
+    if (!vfs::IsPakMounted() && fs::exists("data.pak")) vfs::MountPak("data.pak");
+}
 
+// 窗口参数：尽量从根目录 project.json 读 manifest（名称 / 分辨率），失败用默认值
+static Application::Desc MakeDesc() {
+    static std::string title = "MakeGames Runtime"; // Desc::title 是裸指针，需要静态存储
+    Application::Desc d;
+    d.title = "MakeGames Runtime";
+    d.width = kDefaultDisplayWidth;
+    d.height = kDefaultDisplayHeight;
+    d.maximized = false;
+    d.resizable = true;
+    d.high_dpi = true;
+    d.sdl_flags = SDL_WINDOW_VULKAN;
+    EnsurePakMounted(); // project.json 可能在 pak 里
+    if (auto m = DataManager::Get().Load<ProjectManifest>("project.json")) {
+        if (!m->name.empty()) title = m->name;
+        if (m->display_width > 0) d.width = m->display_width;
+        if (m->display_height > 0) d.height = m->display_height;
+    }
+    d.title = title.c_str();
+    return d;
+}
+
+class GameApplication : public Application, public scene::ISceneHost {
+public:
+    GameApplication() : Application(MakeDesc()) {}
     ~GameApplication() override = default;
+
+    // ---- ISceneHost（GameRuntime 场景来源：裸加载，无编辑器副作用）----
+    scene::Scene* GetActiveScene() override { return scene_.get(); }
+    bool LoadScene(const std::string& path) override {
+        auto raw = DataManager::Get().LoadJsonRaw(path);
+        if (!raw) {
+            MG_LOG_ERROR("GameApplication: Failed to load scene: " << path);
+            return false;
+        }
+        auto s = scene::SceneSerializer::Deserialize(*raw);
+        if (!s) {
+            MG_LOG_ERROR("GameApplication: Failed to deserialize scene: " << path);
+            return false;
+        }
+        s->Initialize();
+        scene_ = std::move(s);
+        tilemap_dirty_ = true;
+        return true;
+    }
 
 protected:
     void OnInit() override;
@@ -86,7 +129,9 @@ protected:
     bool OnProcessEvent(SDL_Event* event) override;
 
 private:
-    bool LoadProjectAndScene();
+    bool LoadProjectData();   // manifest + 数据库 + tilesets（不加载场景；场景由 GameRuntime 驱动）
+    void DrawPlayUI();        // 全窗口 Play Mode 覆盖层（gameui::）
+    std::pair<math::Vec2, float> GetCameraPosZoom() const; // Toast 世界→屏幕换算用
     void RebuildTilemapVB();
     void UpdateCameraUBO();
 
@@ -106,23 +151,23 @@ private:
 
     scene::SpriteRenderSystem sprite_system_;
     scene::TilemapRenderSystem tilemap_system_;
-    scene::AnimatorSystem animator_system_;
-    scene::TweenAnimationSystem tween_animation_system_;
+
+    // Play Mode 编排（Animator/Tween/EventSystem 由 GameRuntime 持有）
+    GameDatabases databases_;
+    scene::PlayModeController play_mode_;
+    std::unique_ptr<scene::GameRuntime> runtime_;
+    std::string game_title_ = "MakeGames";
+    gameui::PauseSub pause_sub_ = gameui::PauseSub::None;
 
     std::unique_ptr<scene::Scene> scene_;
-    uint32_t viewport_w_ = 1280;
-    uint32_t viewport_h_ = 720;
+    uint32_t viewport_w_ = kDefaultDisplayWidth;
+    uint32_t viewport_h_ = kDefaultDisplayHeight;
     bool tilemap_dirty_ = true;
 
     renderer::Buffer tilemap_vb_;
     uint32_t tilemap_vertex_count_ = 0;
 
-    struct TilemapBatch {
-        VkDescriptorSet ds = VK_NULL_HANDLE;
-        uint32_t first_vertex = 0;
-        uint32_t vertex_count = 0;
-    };
-    std::vector<TilemapBatch> tilemap_batches_;
+    std::vector<scene::TilemapBatch> tilemap_batches_;
 
     nlohmann::json tilesets_json_;
     // 瓦片动画：tileset 名 → 动画表；帧哈希变化时重建 tilemap VB
@@ -137,19 +182,25 @@ void GameApplication::OnInit() {
     SDL_Window* window = GetWindow();
     if (!window) return;
 
-    if (!renderer_.Initialize(window)) {
-        MG_LOG_ERROR("GameApplication: Failed to initialize Vulkan renderer");
+    EnsurePakMounted(); // MakeDesc 已挂载则幂等跳过
+
+    // renderer + swapchain + ImGui（含主题/中文字体）一条龙
+    if (!gameui::MG_VulkanImGui_Init(window, renderer_, swapchain_, allocator_,
+                                     /*enable_imgui_viewports=*/false)) {
+        MG_LOG_ERROR("GameApplication: Failed to initialize Vulkan + ImGui");
         return;
     }
-    if (!swapchain_.Initialize(window, &renderer_, allocator_)) {
-        MG_LOG_ERROR("GameApplication: Failed to initialize SwapChain");
-        return;
-    }
+    // 独立运行时不写 imgui.ini，避免污染导出目录
+    ImGui::GetIO().IniFilename = nullptr;
+    // Play Mode 键盘留给游戏逻辑（对话 Enter 推进等），关闭 ImGui 导航
+    ImGui::GetIO().ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard |
+                                    ImGuiConfigFlags_NavEnableGamepad);
 
     viewport_w_ = swapchain_.GetExtent().width;
     viewport_h_ = swapchain_.GetExtent().height;
 
     ResourceManager::Get().Initialize(&renderer_, allocator_);
+    ResourceManager::Get().SetProjectPath("."); // 相对路径以导出根（cwd）解析
     AudioManager::Get().Init();
 
     // Load shaders
@@ -160,108 +211,56 @@ void GameApplication::OnInit() {
 
     // UBO layout & set
     if (sprite_vert_.IsValid() && sprite_frag_.IsValid()) {
-        VkDescriptorSetLayoutBinding binding = {};
-        binding.binding = 0;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        binding.descriptorCount = 1;
-        binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        sprite_ubo_layout_.Create(renderer_.GetDevice(), &binding, 1, allocator_);
-        sprite_ubo_set_.Allocate(renderer_.GetDevice(), renderer_.GetDescriptorPool(), sprite_ubo_layout_.Get());
+        renderer::CreateSpriteUBOLayoutAndSet(renderer_, allocator_, sprite_ubo_layout_, sprite_ubo_set_);
     }
 
-    sprite_ubo_.Create(&renderer_, sizeof(float) * 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, allocator_);
-    if (sprite_ubo_set_.IsValid()) sprite_ubo_set_.WriteBuffer(0, sprite_ubo_.Get(), sizeof(float) * 16);
+    renderer::CreateSpriteUBOBuffer(renderer_, allocator_, sprite_ubo_set_, sprite_ubo_);
 
     // Pipeline with swapchain render pass
     if (sprite_vert_.IsValid() && sprite_frag_.IsValid() && swapchain_.GetRenderPass() != VK_NULL_HANDLE && sprite_ubo_layout_.IsValid()) {
-        auto bindings = scene::GetSpriteVertexBindings();
-        auto attrs = scene::GetSpriteVertexAttributes();
-
-        VkDynamicState dynamic_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-        VkDescriptorSetLayout layouts[2] = { sprite_ubo_layout_.Get(), ResourceManager::Get().GetSamplerLayout() };
-
-        renderer::Pipeline::Config cfg = {};
-        cfg.render_pass = swapchain_.GetRenderPass();
-        cfg.vert = &sprite_vert_;
-        cfg.frag = &sprite_frag_;
-        cfg.vertex_bindings = bindings.data();
-        cfg.vertex_binding_count = (uint32_t)bindings.size();
-        cfg.vertex_attributes = attrs.data();
-        cfg.vertex_attribute_count = (uint32_t)attrs.size();
-        cfg.dynamic_states = dynamic_states;
-        cfg.dynamic_state_count = 2;
-        cfg.viewport_width = (float)viewport_w_;
-        cfg.viewport_height = (float)viewport_h_;
-        cfg.cull_mode = VK_CULL_MODE_NONE;
-        cfg.descriptor_set_layouts = layouts;
-        cfg.descriptor_set_layout_count = 2;
-        // sprite.frag 声明了 ViewMode push constant（编辑器视口用）；运行时恒为 Lit（0），但 layout 必须包含该 range
-        VkPushConstantRange pc_range = {};
-        pc_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        pc_range.offset = 0;
-        pc_range.size = sizeof(int);
-        cfg.push_constant_ranges = &pc_range;
-        cfg.push_constant_range_count = 1;
-        sprite_pipeline_.Create(&renderer_, cfg, allocator_);
+        renderer::CreateSpritePipeline(renderer_, allocator_, swapchain_.GetRenderPass(), sprite_vert_, sprite_frag_,
+                                       sprite_ubo_layout_, ResourceManager::Get().GetSamplerLayout(),
+                                       (float)viewport_w_, (float)viewport_h_,
+                                       VK_POLYGON_MODE_FILL, sprite_pipeline_);
     }
 
     // Quad VB
-    struct Vertex { float x, y, u, v; };
-    Vertex quad[6] = {
-        {-16.0f, -16.0f, 0.0f, 0.0f}, { 16.0f, -16.0f, 1.0f, 0.0f}, { 16.0f,  16.0f, 1.0f, 1.0f},
-        {-16.0f, -16.0f, 0.0f, 0.0f}, { 16.0f,  16.0f, 1.0f, 1.0f}, {-16.0f,  16.0f, 0.0f, 1.0f},
-    };
-    if (sprite_vb_.Create(&renderer_, sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_)) {
-        sprite_vb_.Upload(quad, sizeof(quad));
-    }
+    renderer::CreateSpriteQuadVB(renderer_, allocator_, sprite_vb_);
 
     // Instance buffers
-    constexpr VkDeviceSize kMaxSpriteInstances = 4096;
-    constexpr VkDeviceSize kInstanceStride = sizeof(float) * 20;
-    sprite_instance_vb_.Create(&renderer_, kMaxSpriteInstances * kInstanceStride, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
-    tilemap_dummy_instance_vb_.Create(&renderer_, kInstanceStride, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
-    float identity[20] = {0,0, 0,0, 1,1, 1,1, 1,1,1,1, 0,0,1,1, 0.5f,0.5f, 0,0};
-    tilemap_dummy_instance_vb_.Upload(identity, sizeof(identity));
+    renderer::CreateSpriteInstanceBuffers(renderer_, allocator_, sprite_instance_vb_, tilemap_dummy_instance_vb_);
 
-    LoadProjectAndScene();
+    if (!LoadProjectData()) {
+        MG_LOG_ERROR("GameApplication: project data load failed (running without project?)");
+    }
+
+    // Play Mode 运行时：与编辑器同源。启动即进入标题画面。
+    runtime_ = std::make_unique<scene::GameRuntime>(
+        this, &databases_, play_mode_, ".",
+        [this]() { return std::make_pair(viewport_w_, viewport_h_); });
+    play_mode_.SetState(scene::PlayModeController::State::Playing);
+    runtime_->EnterPlayMode();
 }
 
-bool GameApplication::LoadProjectAndScene() {
-    if (!fs::exists("data/project.json")) {
-        MG_LOG_ERROR("GameApplication: data/project.json not found");
+bool GameApplication::LoadProjectData() {
+    if (!fs::exists("project.json")) {
+        MG_LOG_ERROR("GameApplication: project.json not found (cwd must be the export root)");
         return false;
     }
-    auto manifest = DataManager::Get().Load<ProjectManifest>("data/project.json");
+    auto manifest = DataManager::Get().Load<ProjectManifest>("project.json");
     if (!manifest) {
         MG_LOG_ERROR("GameApplication: Failed to load project.json");
         return false;
     }
-
-    std::string scene_path = manifest->start_scene;
-    if (scene_path.empty()) scene_path = "maps/Map001.json";
-
-    // start_scene 可能是 "maps/Map001.json"，需要加上 data/ 前缀
-    if (!fs::exists(scene_path) && fs::exists("data/" + scene_path)) {
-        scene_path = "data/" + scene_path;
-    }
-    if (!fs::exists(scene_path)) {
-        MG_LOG_ERROR("GameApplication: Start scene not found: " << scene_path);
-        return false;
+    if (!manifest->name.empty()) {
+        game_title_ = manifest->name;
+        SDL_SetWindowTitle(GetWindow(), game_title_.c_str());
     }
 
-    auto raw = DataManager::Get().LoadJsonRaw(scene_path);
-    if (!raw) {
-        MG_LOG_ERROR("GameApplication: Failed to load scene: " << scene_path);
-        return false;
-    }
-    scene_ = scene::SceneSerializer::Deserialize(*raw);
-    if (!scene_) {
-        MG_LOG_ERROR("GameApplication: Failed to deserialize scene");
-        return false;
-    }
-    scene_->Initialize();
+    // 数据库（物品/角色/技能/敌人/商店）
+    databases_.LoadFromDirectory("data");
 
-    // Load tilesets
+    // Load tilesets（纹理预载 + 瓦片动画表）
     auto tilesets_raw = DataManager::Get().LoadJsonRaw("data/tilesets.json");
     if (tilesets_raw && tilesets_raw->is_array()) {
         tilesets_json_ = *tilesets_raw;
@@ -271,7 +270,6 @@ bool GameApplication::LoadProjectAndScene() {
             if (!name.empty() && !img.empty()) {
                 ResourceManager::Get().LoadTexture(img);
             }
-            // 解析瓦片动画表
             if (!name.empty() && item.contains("animations") && item["animations"].is_array()) {
                 auto& anims = tile_anims_[name];
                 for (const auto& aj : item["animations"]) {
@@ -290,6 +288,8 @@ bool GameApplication::LoadProjectAndScene() {
 
 void GameApplication::OnShutdown() {
     vkDeviceWaitIdle(renderer_.GetDevice());
+    runtime_.reset();
+    scene_.reset();
     ResourceManager::Get().Shutdown();
     AudioManager::Get().Shutdown();
     tilemap_vb_.Destroy();
@@ -302,29 +302,21 @@ void GameApplication::OnShutdown() {
     sprite_pipeline_.Destroy();
     sprite_vert_.Destroy();
     sprite_frag_.Destroy();
-    swapchain_.Destroy();
-    renderer_.Shutdown();
+    gameui::MG_VulkanImGui_Shutdown(renderer_, swapchain_);
 #ifdef _WIN32
     Sleep(500);
 #endif
 }
 
 void GameApplication::BeginFrame() {
-    if (swapchain_.NeedsRebuild()) {
-        int w = 0, h = 0;
-        SDL_GetWindowSize(GetWindow(), &w, &h);
-        if (w == 0 || h == 0) { w = (int)viewport_w_; h = (int)viewport_h_; }
-        swapchain_.Resize(w, h);
-        viewport_w_ = swapchain_.GetExtent().width;
-        viewport_h_ = swapchain_.GetExtent().height;
-    }
+    gameui::MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_);
+    viewport_w_ = swapchain_.GetExtent().width;
+    viewport_h_ = swapchain_.GetExtent().height;
 }
 
 void GameApplication::OnUpdate(float dt) {
-    if (!scene_ || !scene_->GetWorld()) return;
-    auto* world = scene_->GetWorld();
-
-    animator_system_.Update(dt, world);
+    // Play Mode 编排：标题请求/暂停/移动/碰撞/相机/动画/事件/Fade/存读档
+    if (runtime_) runtime_->Update(dt);
     AudioManager::Get().Update();
 
     // 瓦片动画时钟：帧哈希变化 → 重建 tilemap VB
@@ -339,6 +331,76 @@ void GameApplication::OnUpdate(float dt) {
             tilemap_dirty_ = true;
         }
     }
+
+    DrawPlayUI();
+}
+
+// 全窗口 Play Mode 覆盖层（与编辑器 Viewport 内嵌版本共用 gameui:: 实现）
+void GameApplication::DrawPlayUI() {
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)viewport_w_, (float)viewport_h_));
+    ImGui::Begin("##play_ui", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing |
+                 ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    using State = scene::PlayModeController::State;
+    using Screen = scene::PlayModeController::Screen;
+    const State state = play_mode_.GetState();
+    const bool in_game = (state == State::Playing && play_mode_.GetScreen() == Screen::Game);
+
+    gameui::PlayUIContext pui;
+    pui.es = runtime_ ? runtime_->GetEventSystem() : nullptr;
+    pui.dbs = &databases_;
+    pui.play_mode = &play_mode_;
+    pui.dl = dl;
+    pui.view_min = ImVec2(0, 0);
+    pui.view_max = ImVec2((float)viewport_w_, (float)viewport_h_);
+    pui.fade_alpha = play_mode_.GetFadeAlpha();
+    if (!game_title_.empty()) pui.game_title = game_title_.c_str();
+    pui.project_root = ".";
+    pui.on_exit = [this]() { Close(); };
+    pui.exit_label = "Quit";
+    auto [cam_pos, cam_zoom] = GetCameraPosZoom();
+    pui.cam_pos = cam_pos;
+    pui.cam_zoom = cam_zoom;
+
+    gameui::DrawFadeOverlay(pui);
+
+    if (state == State::Playing && play_mode_.GetScreen() == Screen::Title)
+        gameui::DrawTitleScreen(pui);
+
+    if (state == State::Paused) gameui::DrawPauseMenu(pui, pause_sub_);
+    else pause_sub_ = gameui::PauseSub::None;
+
+    if (in_game) {
+        gameui::DrawToasts(pui);
+        gameui::DrawDialog(pui, ImGui::GetMousePos());
+        gameui::DrawChoices(pui);
+        gameui::DrawShopOverlay(pui);
+        gameui::DrawBattleOverlay(pui);
+        gameui::DrawHUDOverlays(pui);
+    }
+
+    ImGui::End();
+}
+
+std::pair<math::Vec2, float> GameApplication::GetCameraPosZoom() const {
+    if (scene_ && scene_->GetWorld()) {
+        auto* world = scene_->GetWorld();
+        std::vector<scene::EntityID> all;
+        world->GetAllEntities(all);
+        for (auto e : all) {
+            auto* cam = world->GetComponent<scene::Camera>(e);
+            if (cam && cam->is_primary) {
+                auto* t = world->GetComponent<scene::Transform>(e);
+                return { t ? t->position : math::Vec2{0, 0}, cam->ortho_size };
+            }
+        }
+    }
+    return { math::Vec2{0, 0}, (float)viewport_h_ * 0.5f };
 }
 
 void GameApplication::UpdateCameraUBO() {
@@ -375,28 +437,12 @@ void GameApplication::RebuildTilemapVB() {
     if (!scene_ || !scene_->GetWorld()) return;
     auto* world = scene_->GetWorld();
 
-    std::vector<scene::EntityID> all;
-    world->GetAllEntities(all);
+    std::vector<scene::TilemapVertex> verts;
 
-    struct TVertex { float x, y, u, v; };
-    std::vector<TVertex> verts;
-    tilemap_batches_.clear();
-
-    for (auto e : all) {
-        auto* tm = world->GetComponent<scene::Tilemap>(e);
-        auto* t = world->GetComponent<scene::Transform>(e);
-        if (!tm || tm->layers.empty()) continue;
-        auto names = tm->GetTilesetNames();
-        if (names.empty()) continue;
-        auto& layer = tm->layers[0];
-        float ox = t ? t->position.x : 0.0f;
-        float oy = t ? t->position.y : 0.0f;
-        float sx = t ? t->scale.x : 1.0f;
-        float sy = t ? t->scale.y : 1.0f;
-        int tw = tm->tile_width;
-        int th = tm->tile_height;
-
-        for (const std::string& ts_name : names) {
+    // tileset 数据源：tilesets.json（无独立 tile 尺寸，UV 由地图 tile 尺寸推导）
+    scene::TilesetRenderInfo info;  // 复用 scratch（构建器在下次回调前消费完毕）
+    scene::BuildTilemapMesh(world,
+        [this, &info](const std::string& ts_name, int map_tw, int map_th) -> const scene::TilesetRenderInfo* {
             const nlohmann::json* ts_item = nullptr;
             for (auto& item : tilesets_json_) {
                 if (item.value("name", "") == ts_name) {
@@ -404,56 +450,29 @@ void GameApplication::RebuildTilemapVB() {
                     break;
                 }
             }
-            if (!ts_item) continue;
+            if (!ts_item) return nullptr;
             int cols = ts_item->value("columns", 1);
             int rows = ts_item->value("rows", 1);
-            int start_index = ts_item->value("start_index", 0);
-            std::string image_path = ts_item->value("image_path", "");
             if (cols <= 0) cols = 1;
             if (rows <= 0) rows = 1;
-            int tile_count = cols * rows;
-            int ts_end = start_index + tile_count;
-            const auto* anims = [this, &ts_name]() -> const std::vector<scene::TileAnimDef>* {
-                auto it = tile_anims_.find(ts_name);
-                return it != tile_anims_.end() ? &it->second : nullptr;
-            }();
-
-            uint32_t batch_start = (uint32_t)verts.size();
-            for (int y = 0; y < layer.height; ++y) {
-                for (int x = 0; x < layer.width; ++x) {
-                    int global_tile = layer.GetTile(x, y);
-                    if (global_tile < start_index || global_tile >= ts_end) continue;
-                    // 瓦片动画：命中动画的 tile 替换为当前帧
-                    if (anims) global_tile = scene::ResolveAnimatedTile(*anims, global_tile, start_index, tile_anim_time_);
-                    int local = global_tile - start_index;
-                    int col = local % cols;
-                    int row = local / cols;
-                    float u0 = (float)(col * tw) / (cols * tw);
-                    float u1 = (float)((col + 1) * tw) / (cols * tw);
-                    float v0 = (float)(row * th) / (rows * th);
-                    float v1 = (float)((row + 1) * th) / (rows * th);
-                    float x0 = ox + x * tw * sx;
-                    float x1 = ox + (x + 1) * tw * sx;
-                    float y0 = oy + y * th * sy;
-                    float y1 = oy + (y + 1) * th * sy;
-                    verts.push_back({x0, y0, u0, v0});
-                    verts.push_back({x1, y0, u1, v0});
-                    verts.push_back({x1, y1, u1, v1});
-                    verts.push_back({x0, y0, u0, v0});
-                    verts.push_back({x1, y1, u1, v1});
-                    verts.push_back({x0, y1, u0, v1});
-                }
-            }
-            uint32_t batch_count = (uint32_t)verts.size() - batch_start;
-            if (batch_count > 0 && !image_path.empty()) {
-                VkDescriptorSet ds = ResourceManager::Get().GetOrCreateSamplerDS(image_path);
-                tilemap_batches_.push_back({ds, batch_start, batch_count});
-            }
-        }
-    }
+            std::string image_path = ts_item->value("image_path", "");
+            info.columns       = cols;
+            info.tile_width    = map_tw;
+            info.tile_height   = map_th;
+            info.start_index   = ts_item->value("start_index", 0);
+            info.tile_count    = cols * rows;
+            info.tex_width     = (float)(cols * map_tw);
+            info.tex_height    = (float)(rows * map_th);
+            info.descriptor_set = image_path.empty() ? VK_NULL_HANDLE
+                : ResourceManager::Get().GetOrCreateSamplerDS(image_path);
+            auto it = tile_anims_.find(ts_name);
+            info.animations    = it != tile_anims_.end() ? &it->second : nullptr;
+            return &info;
+        },
+        /*respect_layer_visibility=*/false, tile_anim_time_, verts, tilemap_batches_);
 
     if (!verts.empty()) {
-        size_t bytes = verts.size() * sizeof(TVertex);
+        size_t bytes = verts.size() * sizeof(scene::TilemapVertex);
         if (!tilemap_vb_.IsValid() || tilemap_vb_.GetSize() < (VkDeviceSize)bytes) {
             tilemap_vb_.Destroy();
             tilemap_vb_.Create(&renderer_, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
@@ -466,14 +485,18 @@ void GameApplication::RebuildTilemapVB() {
 }
 
 void GameApplication::OnRender() {
-    if (!scene_ || !scene_->GetWorld()) return;
-    auto* world = scene_->GetWorld();
+    ImGui::Render();
+    ImDrawData* draw_data = ImGui::GetDrawData();
+    const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
+    if (is_minimized) return;
 
-    UpdateCameraUBO();
-
-    if (tilemap_dirty_) {
-        RebuildTilemapVB();
-        tilemap_dirty_ = false;
+    auto* world = (scene_ && scene_->GetWorld()) ? scene_->GetWorld() : nullptr;
+    if (world) {
+        UpdateCameraUBO();
+        if (tilemap_dirty_) {
+            RebuildTilemapVB();
+            tilemap_dirty_ = false;
+        }
     }
 
     if (!swapchain_.AcquireNextImage()) return;
@@ -499,43 +522,48 @@ void GameApplication::OnRender() {
     scissor.extent.height = viewport_h_;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    scene::SpriteRenderSystem::Config sprite_cfg = {};
-    sprite_cfg.pipeline = sprite_pipeline_.Get();
-    sprite_cfg.layout = sprite_pipeline_.GetLayout();
-    sprite_cfg.quad_vb = sprite_vb_.Get();
-    sprite_cfg.instance_vb = &sprite_instance_vb_;
-    sprite_cfg.instance_vb_size = sprite_instance_vb_.GetSize();
-    sprite_cfg.ubo_set = sprite_ubo_set_.Get();
-    sprite_cfg.get_texture_ds = [](void*, const std::string& path) -> VkDescriptorSet {
-        return ResourceManager::Get().GetOrCreateSamplerDS(path);
-    };
-    sprite_cfg.tex_ctx = nullptr;
-    sprite_cfg.get_atlas_rect = [](void*, const std::string& path, float out_uv_rect[4]) -> bool {
-        return ResourceManager::Get().GetSpriteAtlasRect(path, out_uv_rect);
-    };
-    sprite_cfg.get_atlas_ds = [](void*) -> VkDescriptorSet {
-        return ResourceManager::Get().GetSpriteAtlasDS();
-    };
-    sprite_cfg.atlas_ctx = nullptr;
+    if (world) {
+        scene::SpriteRenderSystem::Config sprite_cfg = {};
+        sprite_cfg.pipeline = sprite_pipeline_.Get();
+        sprite_cfg.layout = sprite_pipeline_.GetLayout();
+        sprite_cfg.quad_vb = sprite_vb_.Get();
+        sprite_cfg.instance_vb = &sprite_instance_vb_;
+        sprite_cfg.instance_vb_size = sprite_instance_vb_.GetSize();
+        sprite_cfg.ubo_set = sprite_ubo_set_.Get();
+        sprite_cfg.get_texture_ds = [](void*, const std::string& path) -> VkDescriptorSet {
+            return ResourceManager::Get().GetOrCreateSamplerDS(path);
+        };
+        sprite_cfg.tex_ctx = nullptr;
+        sprite_cfg.get_atlas_rect = [](void*, const std::string& path, float out_uv_rect[4]) -> bool {
+            return ResourceManager::Get().GetSpriteAtlasRect(path, out_uv_rect);
+        };
+        sprite_cfg.get_atlas_ds = [](void*) -> VkDescriptorSet {
+            return ResourceManager::Get().GetSpriteAtlasDS();
+        };
+        sprite_cfg.atlas_ctx = nullptr;
 
-    scene::TilemapRenderSystem::Config tilemap_cfg = {};
-    tilemap_cfg.pipeline = sprite_pipeline_.Get();
-    tilemap_cfg.layout = sprite_pipeline_.GetLayout();
-    tilemap_cfg.ubo_set = sprite_ubo_set_.Get();
-    tilemap_cfg.dummy_instance_vb = tilemap_dummy_instance_vb_.Get();
+        scene::TilemapRenderSystem::Config tilemap_cfg = {};
+        tilemap_cfg.pipeline = sprite_pipeline_.Get();
+        tilemap_cfg.layout = sprite_pipeline_.GetLayout();
+        tilemap_cfg.ubo_set = sprite_ubo_set_.Get();
+        tilemap_cfg.dummy_instance_vb = tilemap_dummy_instance_vb_.Get();
 
-    // Render tilemap per-tileset batches
-    for (const auto& batch : tilemap_batches_) {
-        if (batch.vertex_count == 0) continue;
-        scene::TilemapRenderSystem::VBState vb;
-        vb.buffer = &tilemap_vb_;
-        vb.first_vertex = batch.first_vertex;
-        vb.vertex_count = batch.vertex_count;
-        tilemap_system_.Render(cmd, world, vb, batch.ds, tilemap_cfg);
+        // Render tilemap per-(layer, tileset) batches
+        for (const auto& batch : tilemap_batches_) {
+            if (batch.vertex_count == 0) continue;
+            scene::TilemapRenderSystem::VBState vb;
+            vb.buffer = &tilemap_vb_;
+            vb.first_vertex = batch.first_vertex;
+            vb.vertex_count = batch.vertex_count;
+            tilemap_system_.Render(cmd, world, vb, batch.ds, tilemap_cfg);
+        }
+
+        // Render sprites
+        sprite_system_.Render(cmd, world, sprite_cfg);
     }
 
-    // Render sprites
-    sprite_system_.Render(cmd, world, sprite_cfg);
+    // Play Mode 覆盖层 UI（同一 render pass，绘制在世界之上）
+    ImGui_ImplVulkan_RenderDrawData(draw_data, cmd);
 
     swapchain_.EndRenderPass(cmd);
     swapchain_.SubmitAndPresent(cmd);
@@ -546,14 +574,8 @@ void GameApplication::EndFrame() {
 }
 
 bool GameApplication::OnProcessEvent(SDL_Event* event) {
-    if (event->type == SDL_KEYDOWN && event->key.keysym.sym == SDLK_ESCAPE) {
-        Close();
-        return true;
-    }
-    if (event->type == SDL_WINDOWEVENT && event->window.event == SDL_WINDOWEVENT_RESIZED
-        && event->window.windowID == SDL_GetWindowID(GetWindow())) {
-        swapchain_.RequestRebuild();
-    }
+    // ESC 不再直接退出：Playing 中由 GameRuntime 切暂停菜单，退出走菜单 Quit / 窗口关闭按钮
+    gameui::MG_VulkanImGui_ProcessEvent(GetWindow(), event, swapchain_);
     return false;
 }
 

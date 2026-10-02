@@ -1,0 +1,14 @@
+{
+    "name": "魔塔村物语",
+    "engine_version": "0.1.0",
+    "mode": "2d_topdown",
+    "start_scene": "maps/Map001.json",
+    "tile_size": 32,
+    "display": {
+        "width": 1280,
+        "height": 720,
+        "fullscreen": false,
+        "vsync": true,
+        "pixel_perfect": true
+    }
+}

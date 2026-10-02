@@ -107,13 +107,14 @@ void EditorMenuBar::Draw(EditorContext& ctx, PanelManager& panel_manager) {
         if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export Game")) {
             std::string dir = OpenFolderDialog("Select Export Output Folder");
             if (!dir.empty()) {
-                if (ExportGame(ctx, dir)) {
+                if (ExportGame(ctx, dir, pack_resources_)) {
                     export_success_ = true;
                 } else {
                     export_error_ = true;
                 }
             }
         }
+        ImGui::MenuItem("导出时打包资源 (.pak)", nullptr, &pack_resources_);
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_FA_ARROW_LEFT " Exit to Launcher")) {}
         ImGui::EndMenu();

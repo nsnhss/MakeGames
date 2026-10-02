@@ -1,5 +1,5 @@
 #include "editor/editor_project_manager.h"
-#include "editor/debug_log.h"
+#include "core/debug_log.h"
 #include "resource/data_manager.h"
 #include "third_party/json.hpp"
 #include <algorithm>
@@ -36,7 +36,7 @@ bool EditorProjectManager::NewProject(const std::string& name,
         manifest.name = name;
         manifest.mode = mode;
         manifest.start_scene = "maps/Map001.json";
-        manifest.tile_size = 32;
+        manifest.tile_size = kDefaultTileSize;
         DataManager::Get().Save(path + "/project.json", manifest);
 
         // MapInfos.json 由 Editor 首次 OpenProject 时通过 RebuildMapInfos 生成

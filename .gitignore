@@ -2,6 +2,7 @@
 cmake-build-*/
 build/
 out/
+release/
 
 # 本地 MinGW 工具链（344MB 不入库；build.ps1 回退链：CLion 捆绑 → mingw_link → 系统 PATH）
 mingw_link/
@@ -24,8 +25,7 @@ saves/
 *.exe
 *.pdb
 
-# 生成的演示项目（tools/generate_demo_project.py 产物，不入库）
-demo_project/
+# demo_project 已入库（示例项目随发布包）；如需重新生成：python tools/generate_demo_project.py
 
 # OS
 Thumbs.db

@@ -4,8 +4,10 @@
 // Update() 用 MixVoices 混音所有声部后一次性 SDL_QueueAudio。
 #include "audio_manager.h"
 #include "audio_decoder.h"
+#include "resource/vfs.h"
 #include <SDL.h>
 #include <algorithm>
+#include <vector>
 #include "src/core/log.h"
 
 namespace mg {
@@ -74,24 +76,36 @@ size_t AudioManager::LoadSound(const std::string& path) {
     auto it = path_to_sound_.find(path);
     if (it != path_to_sound_.end()) return it->second;
 
+    // 统一经 VFS 读字节（pak 命中读包，否则落盘），再走内存解码
+    std::vector<uint8_t> bytes;
+    if (!vfs::ReadFile(path, bytes)) {
+        MG_LOG_ERROR("[AudioManager] Failed to read: " << path);
+        return kInvalidSound;
+    }
+
     audio::SoundData data;
     const audio::AudioCodec codec = audio::DetectAudioCodec(path);
     if (codec == audio::AudioCodec::OGG || codec == audio::AudioCodec::MP3) {
         // OGG / MP3：第三方解码为 S16 PCM 后统一格式归一
         std::vector<int16_t> pcm;
         int rate = 0, channels = 0;
-        if (!audio::DecodeAudioFile(path, pcm, rate, channels)) return kInvalidSound;
+        if (!audio::DecodeAudioMemory(path, bytes, pcm, rate, channels)) return kInvalidSound;
         if (!ConvertToDeviceFormat(AUDIO_S16SYS, rate, channels,
                                    pcm.data(), (int)(pcm.size() * sizeof(int16_t)), data)) {
             MG_LOG_ERROR("[AudioManager] Empty or failed conversion: " << path);
             return kInvalidSound;
         }
     } else {
-        // WAV（默认路径）
+        // WAV（默认路径）：内存版 SDL_LoadWAV_RW
+        SDL_RWops* rw = SDL_RWFromMem(bytes.data(), (int)bytes.size());
+        if (!rw) {
+            MG_LOG_ERROR("[AudioManager] SDL_RWFromMem failed: " << path);
+            return kInvalidSound;
+        }
         SDL_AudioSpec src_spec;
         Uint8* buffer = nullptr;
         Uint32 len = 0;
-        if (!SDL_LoadWAV(path.c_str(), &src_spec, &buffer, &len)) {
+        if (!SDL_LoadWAV_RW(rw, 1 /*free rw*/, &src_spec, &buffer, &len)) {
             MG_LOG_ERROR("[AudioManager] Failed to load WAV: " << path << " (" << SDL_GetError() << ")");
             return kInvalidSound;
         }

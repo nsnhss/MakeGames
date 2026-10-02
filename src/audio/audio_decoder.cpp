@@ -25,14 +25,8 @@ AudioCodec DetectAudioCodec(const std::string& path) {
     return AudioCodec::Unknown;
 }
 
-static bool DecodeOGG(const std::string& path, std::vector<int16_t>& out_pcm,
-                      int& out_rate, int& out_channels) {
-    int err = 0;
-    stb_vorbis* v = stb_vorbis_open_filename(path.c_str(), &err, nullptr);
-    if (!v) {
-        MG_LOG_ERROR("[AudioDecoder] stb_vorbis open failed (" << err << "): " << path);
-        return false;
-    }
+static bool DecodeOGGStream(stb_vorbis* v, const std::string& path,
+                            std::vector<int16_t>& out_pcm, int& out_rate, int& out_channels) {
     stb_vorbis_info info = stb_vorbis_get_info(v);
     out_rate = (int)info.sample_rate;
     out_channels = (int)info.channels;
@@ -54,12 +48,31 @@ static bool DecodeOGG(const std::string& path, std::vector<int16_t>& out_pcm,
     return true;
 }
 
-static bool DecodeMP3(const std::string& path, std::vector<int16_t>& out_pcm,
+static bool DecodeOGG(const std::string& path, std::vector<int16_t>& out_pcm,
                       int& out_rate, int& out_channels) {
-    drmp3_config config = {};
-    drmp3_uint64 frame_count = 0;
-    drmp3_int16* pcm = drmp3_open_file_and_read_pcm_frames_s16(
-        path.c_str(), &config, &frame_count, nullptr);
+    int err = 0;
+    stb_vorbis* v = stb_vorbis_open_filename(path.c_str(), &err, nullptr);
+    if (!v) {
+        MG_LOG_ERROR("[AudioDecoder] stb_vorbis open failed (" << err << "): " << path);
+        return false;
+    }
+    return DecodeOGGStream(v, path, out_pcm, out_rate, out_channels);
+}
+
+static bool DecodeOGGMemory(const std::string& path, const std::vector<uint8_t>& bytes,
+                            std::vector<int16_t>& out_pcm, int& out_rate, int& out_channels) {
+    int err = 0;
+    stb_vorbis* v = stb_vorbis_open_memory(bytes.data(), (int)bytes.size(), &err, nullptr);
+    if (!v) {
+        MG_LOG_ERROR("[AudioDecoder] stb_vorbis open failed (" << err << "): " << path);
+        return false;
+    }
+    return DecodeOGGStream(v, path, out_pcm, out_rate, out_channels);
+}
+
+static bool CollectMP3Frames(drmp3_int16* pcm, drmp3_uint64 frame_count,
+                             const drmp3_config& config, const std::string& path,
+                             std::vector<int16_t>& out_pcm, int& out_rate, int& out_channels) {
     if (!pcm || frame_count == 0) {
         MG_LOG_ERROR("[AudioDecoder] dr_mp3 decode failed: " << path);
         if (pcm) drmp3_free(pcm, nullptr);
@@ -73,11 +86,39 @@ static bool DecodeMP3(const std::string& path, std::vector<int16_t>& out_pcm,
     return true;
 }
 
+static bool DecodeMP3(const std::string& path, std::vector<int16_t>& out_pcm,
+                      int& out_rate, int& out_channels) {
+    drmp3_config config = {};
+    drmp3_uint64 frame_count = 0;
+    drmp3_int16* pcm = drmp3_open_file_and_read_pcm_frames_s16(
+        path.c_str(), &config, &frame_count, nullptr);
+    return CollectMP3Frames(pcm, frame_count, config, path, out_pcm, out_rate, out_channels);
+}
+
+static bool DecodeMP3Memory(const std::string& path, const std::vector<uint8_t>& bytes,
+                            std::vector<int16_t>& out_pcm, int& out_rate, int& out_channels) {
+    drmp3_config config = {};
+    drmp3_uint64 frame_count = 0;
+    drmp3_int16* pcm = drmp3_open_memory_and_read_pcm_frames_s16(
+        bytes.data(), bytes.size(), &config, &frame_count, nullptr);
+    return CollectMP3Frames(pcm, frame_count, config, path, out_pcm, out_rate, out_channels);
+}
+
 bool DecodeAudioFile(const std::string& path, std::vector<int16_t>& out_pcm,
                      int& out_sample_rate, int& out_channels) {
     switch (DetectAudioCodec(path)) {
         case AudioCodec::OGG: return DecodeOGG(path, out_pcm, out_sample_rate, out_channels);
         case AudioCodec::MP3: return DecodeMP3(path, out_pcm, out_sample_rate, out_channels);
+        default: return false;
+    }
+}
+
+bool DecodeAudioMemory(const std::string& path, const std::vector<uint8_t>& bytes,
+                       std::vector<int16_t>& out_pcm, int& out_sample_rate, int& out_channels) {
+    if (bytes.empty()) return false;
+    switch (DetectAudioCodec(path)) {
+        case AudioCodec::OGG: return DecodeOGGMemory(path, bytes, out_pcm, out_sample_rate, out_channels);
+        case AudioCodec::MP3: return DecodeMP3Memory(path, bytes, out_pcm, out_sample_rate, out_channels);
         default: return false;
     }
 }

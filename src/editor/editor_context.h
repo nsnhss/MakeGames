@@ -10,9 +10,9 @@
 #include "tileset_asset.h"
 #include "resource/schema/project_schema.h"
 #include "editor/command_history.h"
-#include "editor/game_databases.h"
+#include "resource/game_databases.h"
 #include "editor/selection_manager.h"
-#include "editor/play_mode_controller.h"
+#include "scene/play_mode_controller.h"
 #include "editor/viewport_state.h"
 #include "editor/tileset_editor.h"
 #include "editor/editor_project_manager.h"
@@ -78,7 +78,7 @@ public:
     // ---- 多地图管理 ----
     MapInfos LoadMapInfos() const { return project_.LoadMapInfos(); } // 读取 maps/MapInfos.json
     bool SwitchScene(const std::string& map_name) { return session_.SwitchScene(map_name); }          // 保存当前场景并切换到目标场景（map_name 为 MapInfos 中的 name 字段）
-    bool CreateAndSaveNewScene(const std::string& name, int w = 20, int h = 15, int tile_size = 32) { return session_.CreateAndSaveNewScene(name, w, h, tile_size); }    // 创建并保存新场景，失败时回滚
+    bool CreateAndSaveNewScene(const std::string& name, int w = kDefaultMapWidth, int h = kDefaultMapHeight, int tile_size = kDefaultTileSize) { return session_.CreateAndSaveNewScene(name, w, h, tile_size); }    // 创建并保存新场景，失败时回滚
     bool RenameScene(const std::string& old_name, const std::string& new_name) { return session_.RenameScene(old_name, new_name); } // 重命名场景文件并更新索引
     bool DeleteScene(const std::string& name) { return session_.DeleteScene(name); }              // 删除场景文件并从索引移除
 
@@ -97,10 +97,10 @@ public:
     bool SaveCurrentScene() { return session_.SaveCurrentScene(); }
 
     // ---- 播放模式（委托 PlayModeController）----
-    using PlayState = PlayModeController::State;   // 兼容旧调用点
-    using ScreenMode = PlayModeController::Screen;
-    using FadeState = PlayModeController::Fade;
-    using SaveSlotInfo = PlayModeController::SaveSlotInfo;
+    using PlayState = scene::PlayModeController::State;   // 兼容旧调用点
+    using ScreenMode = scene::PlayModeController::Screen;
+    using FadeState = scene::PlayModeController::Fade;
+    using SaveSlotInfo = scene::PlayModeController::SaveSlotInfo;
 
     void SetPlayState(PlayState state);
     PlayState GetPlayState() const { return play_mode_.GetState(); }
@@ -126,7 +126,7 @@ public:
 
     // ---- 存档槽位 ----
     SaveSlotInfo ReadSaveSlotInfo(int slot) const { return play_mode_.ReadSaveSlotInfo(project_.GetProjectPath(), slot); }
-    static std::string GetSaveFilePath(int slot) { return PlayModeController::GetSaveFilePath(slot); }
+    static std::string GetSaveFilePath(int slot) { return scene::PlayModeController::GetSaveFilePath(slot); }
 
     // ---- 存档请求（由 ViewportPanel 触发，EditorLayer 执行）----
     void RequestSave() { play_mode_.RequestSave(); }
@@ -135,7 +135,7 @@ public:
     void RequestLoadFromSlot(int slot) { play_mode_.RequestLoadFromSlot(slot); }
     int ConsumeSaveRequest() { return play_mode_.ConsumeSaveRequest(); }
     int ConsumeLoadRequest() { return play_mode_.ConsumeLoadRequest(); }
-    PlayModeController& GetPlayMode() { return play_mode_; }
+    scene::PlayModeController& GetPlayMode() { return play_mode_; }
 
     // ---- 变换工具状态（委托 ViewportState）----
     using GizmoMode = ViewportState::Gizmo; // 兼容旧调用点
@@ -279,7 +279,7 @@ private:
 
     SceneSession session_;
 
-    PlayModeController play_mode_;
+    scene::PlayModeController play_mode_;
     ViewportState viewport_;
 
     IAssetManager* asset_manager_ = nullptr;

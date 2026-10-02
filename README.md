@@ -12,9 +12,10 @@
 
 ## 功能概览
 
-- **编辑器**：Outliner / Details / Content Browser / Viewport（Gizmo、瓦片绘制 + autotile、实体点选）/ 事件编辑器（9 种触发器 + 动作流）/ Tile Palette / Animation 面板
-- **运行时**：ECS 场景、正交相机、AABB 瓦片碰撞、对话/选项/商店/回合制战斗、存档（3 槽位）、BGM/BGS/ME/SE 音频、Lua 绑定
+- **编辑器**：Outliner / Details / Content Browser / Viewport（Gizmo、瓦片绘制 + autotile、实体点选）/ 事件编辑器（9 种触发器 + 动作流）/ Tile Palette / Animation 面板；Play Mode 一键试玩（与运行时同源 `GameRuntime`）
+- **运行时**：ECS 场景、正交相机、AABB 瓦片碰撞、对话/选项/商店/回合制战斗、存档（3 槽位）、BGM/BGS/ME/SE 音频、Lua 绑定、标题/暂停/HUD 全套游戏内 UI
 - **数据驱动**：Actors / Items / Skills / Enemies / Shops JSON 数据库 + Actor 成长曲线
+- **导出发布**：编辑器内一键导出独立游戏包（可选 `.pak` 资源打包）；`tools/package_release.ps1` 组装引擎发布包（含 `demo_project/` 示例项目）
 
 ## 构建
 
@@ -29,4 +30,11 @@ powershell -ExecutionPolicy Bypass -File build.ps1 test   # 构建 + ctest
 
 ## 文档
 
-详见 `docs/`：`Progress.md`（进度事实源）、`GameDataModel.md`（数据模型）、`TilemapDesign.md`、`QualityOverhaul.md` 等。
+详见 `docs/`：
+
+- `Progress.md` — 进度事实源（唯一权威）
+- `GameDataModel.md` — 组件/事件/数据库字段级数据模型
+- `TilemapDesign.md` — Tilemap 系统设计
+- `archive/` — 历史规划快照（不再维护，仅供溯源）
+
+Agent 操作约定见根目录 `AGENTS.md`。

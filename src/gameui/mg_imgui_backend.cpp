@@ -1,6 +1,6 @@
 #include "mg_imgui_backend.h"
 #include "mg_imgui_theme.h"
-#include "../debug_log.h"
+#include "core/debug_log.h"
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_vulkan.h"
 #include "renderer/renderer_context.h"
@@ -9,7 +9,7 @@
 #include <imgui.h>
 #include <SDL.h>
 
-namespace mg::editor {
+namespace mg::gameui {
 
 void MG_ImGuiVulkan_Init(const MG_ImGuiVulkanConfig& cfg) {
     EDITOR_LOG("MG_ImGuiVulkan_Init enter");
@@ -151,4 +151,4 @@ void MG_VulkanImGui_Shutdown(renderer::RendererContext& renderer,
     renderer.Shutdown();
 }
 
-} // namespace mg::editor
+} // namespace mg::gameui

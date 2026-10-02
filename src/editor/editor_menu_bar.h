@@ -23,6 +23,7 @@ public:
 
     bool export_success_ = false;
     bool export_error_ = false;
+    bool pack_resources_ = true; // 导出时把资源打包为 data.pak（File 菜单可切换）
 
     // SpriteSheet 导入向导
     bool show_spritesheet_import_ = false;

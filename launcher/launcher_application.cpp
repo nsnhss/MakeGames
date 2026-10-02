@@ -1,6 +1,6 @@
 #include "launcher_application.h"
 #include "src/core/log.h"
-#include "src/editor/imgui/mg_imgui_backend.h"
+#include "src/gameui/mg_imgui_backend.h"
 #include <stdio.h>
 
 #ifdef _WIN32
@@ -32,7 +32,7 @@ void LauncherApplication::OnInit()
     SDL_Window* window = GetWindow();
     if (!window) return;
 
-    if (!mg::editor::MG_VulkanImGui_Init(window, renderer_, swapchain_, allocator_)) {
+    if (!mg::gameui::MG_VulkanImGui_Init(window, renderer_, swapchain_, allocator_)) {
         MG_LOG_ERROR("Launcher: Failed to initialize Vulkan + ImGui.");
         return;
     }
@@ -44,12 +44,12 @@ void LauncherApplication::OnShutdown()
     DestroyWindow();
     vkDeviceWaitIdle(renderer_.GetDevice());
 
-    mg::editor::MG_VulkanImGui_Shutdown(renderer_, swapchain_);
+    mg::gameui::MG_VulkanImGui_Shutdown(renderer_, swapchain_);
 }
 
 void LauncherApplication::BeginFrame()
 {
-    mg::editor::MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_);
+    mg::gameui::MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_);
 }
 
 void LauncherApplication::EndFrame()
@@ -60,14 +60,14 @@ void LauncherApplication::EndFrame()
 
     if (!is_minimized && swapchain_.AcquireNextImage()) {
         VkCommandBuffer cmd = swapchain_.BeginCommandBuffer();
-        mg::editor::MG_VulkanImGui_RenderFrame(swapchain_, cmd, draw_data, clear_color_);
+        mg::gameui::MG_VulkanImGui_RenderFrame(swapchain_, cmd, draw_data, clear_color_);
         swapchain_.SubmitAndPresent(cmd);
     }
 }
 
 bool LauncherApplication::OnProcessEvent(SDL_Event* event)
 {
-    mg::editor::MG_VulkanImGui_ProcessEvent(GetWindow(), event, swapchain_);
+    mg::gameui::MG_VulkanImGui_ProcessEvent(GetWindow(), event, swapchain_);
     return false;
 }
 

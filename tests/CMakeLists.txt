@@ -18,6 +18,7 @@ add_executable(engine_tests
     test_tile_animation.cpp
     test_spritesheet_grid.cpp
     test_event_triggers.cpp
+    test_pak.cpp
 )
 
 target_include_directories(engine_tests PRIVATE

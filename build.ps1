@@ -77,8 +77,8 @@ switch ($Target.ToLower()) {
         ninja editor
     }
     "all" {
-        Write-Host "=== 编译 launcher + editor ===" -ForegroundColor Cyan
-        ninja launcher editor
+        Write-Host "=== 编译 launcher + editor + game ===" -ForegroundColor Cyan
+        ninja launcher editor game
     }
     "test" {
         Write-Host "=== 编译并运行单元测试 ===" -ForegroundColor Cyan

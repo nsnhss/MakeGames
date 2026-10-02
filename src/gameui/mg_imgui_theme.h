@@ -2,7 +2,7 @@
 #include "imgui.h"
 
 namespace mg {
-namespace editor {
+namespace gameui {
 
 // 应用 UE5 风格暗色主题（完整配色 + 尺寸）
 void MG_ApplyTheme_UE5Dark();
@@ -15,5 +15,5 @@ void MG_ApplyTheme_UE5Light();
 // scale: DPI 缩放比例
 ImFont* MG_LoadFonts(float scale);
 
-} // namespace editor
+} // namespace gameui
 } // namespace mg

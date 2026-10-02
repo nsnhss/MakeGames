@@ -1,5 +1,6 @@
 #pragma once
 #include "third_party/json.hpp"
+#include "resource/vfs.h"
 #include <string>
 #include <unordered_map>
 #include <memory>
@@ -21,6 +22,10 @@ public:
         try {
             auto it = cache_.find(path);
             if (it != cache_.end()) {
+                // pak 内容不可变：命中即返回（无热重载语义）
+                if (vfs::IsPakMounted()) {
+                    return std::static_pointer_cast<const Schema>(it->second.data);
+                }
                 if (std::filesystem::exists(path)) {
                     auto mtime = std::filesystem::last_write_time(path);
                     if (it->second.mtime == mtime) {
@@ -28,10 +33,9 @@ public:
                     }
                 }
             }
-            std::ifstream f(path);
-            if (!f.is_open()) return nullptr;
-            nlohmann::json j;
-            f >> j;
+            std::vector<uint8_t> bytes;
+            if (!vfs::ReadFile(path, bytes)) return nullptr;
+            nlohmann::json j = nlohmann::json::parse(bytes);
             auto ptr = std::make_shared<Schema>();
             auto opt = Schema::FromJson(j);
             if (!opt) return nullptr;

@@ -9,6 +9,7 @@
 #include "scene/components/event_trigger.h"
 #include "scene/components/name.h"
 #include "scene/action_commands.h"
+#include "scene/action_cmd_registry.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cstring>
@@ -23,41 +24,8 @@ const char* EventEditorPanel::GetIcon() const {
 }
 
 // ------------------------------------------------------------------
-// 命令名称映射
+// 命令名称映射：唯一来源 scene/action_cmd_registry.h（D0-6）
 // ------------------------------------------------------------------
-static const char* GetActionCmdName(ActionCmd cmd) {
-    switch (cmd) {
-        case ActionCmd::ShowMessage:    return "Show Message";
-        case ActionCmd::ShowToast:      return "Show Toast";
-        case ActionCmd::ShowChoices:    return "Show Choices";
-        case ActionCmd::TransferPlayer: return "Transfer Player";
-        case ActionCmd::MoveEntity:     return "Move Entity";
-        case ActionCmd::PlayAnimation:  return "Play Animation";
-        case ActionCmd::PlaySound:      return "Play Sound";
-        case ActionCmd::PlayBGM:        return "Play BGM";
-        case ActionCmd::StopBGM:        return "Stop BGM";
-        case ActionCmd::PlayBGS:        return "Play BGS";
-        case ActionCmd::StopBGS:        return "Stop BGS";
-        case ActionCmd::PlayME:         return "Play ME";
-        case ActionCmd::SetVariable:    return "Set Variable";
-        case ActionCmd::SetSwitch:      return "Set Switch";
-        case ActionCmd::SetSelfSwitch:  return "Set Self Switch";
-        case ActionCmd::AddItem:        return "Add Item";
-        case ActionCmd::RemoveItem:     return "Remove Item";
-        case ActionCmd::ShopProcessing: return "Shop Processing";
-        case ActionCmd::BattleProcessing: return "Battle Processing";
-        case ActionCmd::ShowUI:         return "Show UI";
-        case ActionCmd::HideUI:         return "Hide UI";
-        case ActionCmd::Wait:           return "Wait";
-        case ActionCmd::If:             return "If";
-        case ActionCmd::Else:           return "Else";
-        case ActionCmd::EndIf:          return "End If";
-        case ActionCmd::Loop:           return "Loop";
-        case ActionCmd::BreakLoop:      return "Break Loop";
-        case ActionCmd::CallScript:     return "Call Script";
-        default: return "Unknown";
-    }
-}
 
 [[maybe_unused]] static const char* GetTriggerTypeName(EventPage::TriggerType type) {
     switch (type) {
@@ -495,9 +463,9 @@ static void DrawActionList(EditorProjectManager& project_, EventPage& page, bool
         ImGui::PushID(i);
 
         // Header row
-        bool open = ImGui::TreeNodeEx(GetActionCmdName(action.cmd),
+        bool open = ImGui::TreeNodeEx(GetActionCmdDisplayName(action.cmd),
             ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap,
-            "%s", GetActionCmdName(action.cmd));
+            "%s", GetActionCmdDisplayName(action.cmd));
 
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60);
         if (ImGui::SmallButton(ICON_FA_TRASH)) {
@@ -568,34 +536,9 @@ static void DrawActionList(EditorProjectManager& project_, EventPage& page, bool
         ImGui::OpenPopup("AddActionPopup");
     }
     if (ImGui::BeginPopup("AddActionPopup")) {
-        const char* cmd_names[] = {
-            "Show Message", "Show Toast", "Show Choices", "Transfer Player", "Move Entity",
-            "Play Animation", "Play Sound", "Play BGM", "Stop BGM", "Play BGS", "Stop BGS", "Play ME",
-            "Set Variable", "Set Switch", "Set Self Switch",
-            "Add Item", "Remove Item", "Shop Processing", "Battle Processing",
-            "Show UI", "Hide UI",
-            "Wait",
-            "If", "Else", "End If",
-            "Loop", "Break Loop",
-            "Call Script"
-        };
-        ActionCmd cmd_values[] = {
-            ActionCmd::ShowMessage, ActionCmd::ShowToast, ActionCmd::ShowChoices,
-            ActionCmd::TransferPlayer, ActionCmd::MoveEntity,
-            ActionCmd::PlayAnimation, ActionCmd::PlaySound, ActionCmd::PlayBGM,
-            ActionCmd::StopBGM, ActionCmd::PlayBGS, ActionCmd::StopBGS, ActionCmd::PlayME,
-            ActionCmd::SetVariable, ActionCmd::SetSwitch, ActionCmd::SetSelfSwitch,
-            ActionCmd::AddItem, ActionCmd::RemoveItem, ActionCmd::ShopProcessing, ActionCmd::BattleProcessing,
-            ActionCmd::ShowUI, ActionCmd::HideUI,
-            ActionCmd::Wait,
-            ActionCmd::If, ActionCmd::Else, ActionCmd::EndIf,
-            ActionCmd::Loop, ActionCmd::BreakLoop,
-            ActionCmd::CallScript
-        };
-        const int cmd_count = IM_ARRAYSIZE(cmd_names);
-        for (int i = 0; i < cmd_count; ++i) {
-            if (ImGui::MenuItem(cmd_names[i])) {
-                page.actions.push_back(Action{cmd_values[i]});
+        for (const auto& info : kActionCmdRegistry) {
+            if (ImGui::MenuItem(info.display)) {
+                page.actions.push_back(Action{info.cmd});
                 dirty = true;
                 ImGui::CloseCurrentPopup();
             }

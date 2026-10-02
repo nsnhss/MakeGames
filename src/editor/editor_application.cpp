@@ -4,9 +4,10 @@
 // ImGui 与 Vulkan 对接、以及编辑器专用的 Sprite/Tilemap/Animator ECS 渲染系统。
 #include "editor_application.h"
 #include "editor_context.h"
-#include "imgui/mg_imgui_backend.h"
+#include "gameui/mg_imgui_backend.h"
 #include "backends/imgui_impl_vulkan.h"
 #include "renderer/renderer_utils.h"
+#include "renderer/sprite_pipeline_setup.h"
 #include "renderer/texture.h"
 #include "scene/scene.h"
 #include "scene/world.h"
@@ -23,7 +24,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include "debug_log.h"
+#include "core/debug_log.h"
 
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
@@ -279,80 +280,30 @@ void EditorApplication::RebuildTilemapVB()
     auto* world = scene->GetWorld();
     if (!world) return;
 
-    struct TVertex { float x, y, u, v; };
-    std::vector<TVertex> verts;
+    std::vector<scene::TilemapVertex> verts;
     verts.reserve(4096);
-    tilemap_batches_.clear();
 
-    std::vector<scene::EntityID> entities;
-    world->GetAllEntities(entities);
-
-    for (auto e : entities) {
-        auto* tilemap = world->GetComponent<scene::Tilemap>(e);
-        if (!tilemap) continue;
-        auto tileset_names = tilemap->GetTilesetNames();
-        if (tileset_names.empty()) continue;
-
-        auto* transform = world->GetComponent<scene::Transform>(e);
-        float ox = transform ? transform->position.x : 0.0f;
-        float oy = transform ? transform->position.y : 0.0f;
-        float sx = transform ? transform->scale.x : 1.0f;
-        float sy = transform ? transform->scale.y : 1.0f;
-        float tw = (float)tilemap->tile_width;
-        float th = (float)tilemap->tile_height;
-
-        for (const std::string& ts_name : tileset_names) {
+    // tileset 数据源：TilesetAsset + 真实纹理尺寸（UV 用）
+    scene::TilesetRenderInfo info;  // 复用 scratch（构建器在下次回调前消费完毕）
+    scene::BuildTilemapMesh(world,
+        [this, &info](const std::string& ts_name, int, int) -> const scene::TilesetRenderInfo* {
             const auto* ts = ctx_.GetTileset(ts_name);
-            if (!ts || !ts->texture_ptr || !ts->texture_ptr->IsValid()) continue;
-
-            uint32_t batch_start = (uint32_t)verts.size();
-            float tex_w = (float)ts->texture_ptr->GetWidth();
-            float tex_h = (float)ts->texture_ptr->GetHeight();
-            int ts_end = ts->start_index + ts->tile_count;
-
-            for (const auto& layer : tilemap->layers) {
-                if (!layer.visible) continue;
-                for (int y = 0; y < layer.height; ++y) {
-                    for (int x = 0; x < layer.width; ++x) {
-                        int global_tile = layer.GetTile(x, y);
-                        if (global_tile < ts->start_index || global_tile >= ts_end) continue;
-
-                        // 瓦片动画：命中动画的 tile 替换为当前帧
-                        global_tile = scene::ResolveAnimatedTile(ts->animations, global_tile, ts->start_index, tile_anim_time_);
-
-                        int local = global_tile - ts->start_index;
-                        int col = local % ts->columns;
-                        int row = local / ts->columns;
-                        float u0 = (float)(col * ts->tile_width) / tex_w;
-                        float v0 = (float)(row * ts->tile_height) / tex_h;
-                        float u1 = (float)((col + 1) * ts->tile_width) / tex_w;
-                        float v1 = (float)((row + 1) * ts->tile_height) / tex_h;
-
-                        float x0 = ox + x * tw * sx;
-                        float x1 = ox + (x + 1) * tw * sx;
-                        float y0 = oy + y * th * sy;
-                        float y1 = oy + (y + 1) * th * sy;
-
-                        verts.push_back({x0, y0, u0, v0});
-                        verts.push_back({x1, y0, u1, v0});
-                        verts.push_back({x1, y1, u1, v1});
-                        verts.push_back({x0, y0, u0, v0});
-                        verts.push_back({x1, y1, u1, v1});
-                        verts.push_back({x0, y1, u0, v1});
-                    }
-                }
-            }
-
-            uint32_t batch_count = (uint32_t)verts.size() - batch_start;
-            if (batch_count > 0) {
-                VkDescriptorSet ds = ResourceManager::Get().GetOrCreateSamplerDS(ts->texture_ptr);
-                tilemap_batches_.push_back({ds, batch_start, batch_count});
-            }
-        }
-    }
+            if (!ts || !ts->texture_ptr || !ts->texture_ptr->IsValid()) return nullptr;
+            info.columns       = ts->columns;
+            info.tile_width    = ts->tile_width;
+            info.tile_height   = ts->tile_height;
+            info.start_index   = ts->start_index;
+            info.tile_count    = ts->tile_count;
+            info.tex_width     = (float)ts->texture_ptr->GetWidth();
+            info.tex_height    = (float)ts->texture_ptr->GetHeight();
+            info.descriptor_set = ResourceManager::Get().GetOrCreateSamplerDS(ts->texture_ptr);
+            info.animations    = &ts->animations;
+            return &info;
+        },
+        /*respect_layer_visibility=*/true, tile_anim_time_, verts, tilemap_batches_);
 
     if (!verts.empty()) {
-        size_t bytes = verts.size() * sizeof(TVertex);
+        size_t bytes = verts.size() * sizeof(scene::TilemapVertex);
         if (!tilemap_vb_.IsValid() || tilemap_vb_.GetSize() < (VkDeviceSize)bytes) {
             tilemap_vb_.Destroy();
             tilemap_vb_.Create(&renderer_, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
@@ -371,7 +322,7 @@ void EditorApplication::OnInit()
     SDL_Window* window = GetWindow();
     if (!window) return;
 
-    if (!MG_VulkanImGui_Init(window, renderer_, swapchain_, allocator_,
+    if (!gameui::MG_VulkanImGui_Init(window, renderer_, swapchain_, allocator_,
                              /*enable_imgui_viewports=*/true)) {
         EDITOR_LOG("Failed to initialize Vulkan + ImGui");
         return;
@@ -405,21 +356,11 @@ void EditorApplication::OnInit()
 
     // ---- Create UBO layout & set ----
     if (sprite_vert_.IsValid() && sprite_frag_.IsValid()) {
-        VkDescriptorSetLayoutBinding binding = {};
-        binding.binding = 0;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        binding.descriptorCount = 1;
-        binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-        sprite_ubo_layout_.Create(renderer_.GetDevice(), &binding, 1, allocator_);
-        sprite_ubo_set_.Allocate(renderer_.GetDevice(), renderer_.GetDescriptorPool(), sprite_ubo_layout_.Get());
+        renderer::CreateSpriteUBOLayoutAndSet(renderer_, allocator_, sprite_ubo_layout_, sprite_ubo_set_);
     }
 
     // ---- Create UBO buffer ----
-    sprite_ubo_.Create(&renderer_, sizeof(float) * 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, allocator_);
-    if (sprite_ubo_set_.IsValid()) {
-        sprite_ubo_set_.WriteBuffer(0, sprite_ubo_.Get(), sizeof(float) * 16);
-    }
+    renderer::CreateSpriteUBOBuffer(renderer_, allocator_, sprite_ubo_set_, sprite_ubo_);
 
 
     // ---- Initialize ResourceManager (texture loading + sampler DS) ----
@@ -431,89 +372,28 @@ void EditorApplication::OnInit()
     // ---- Create Sprite Pipeline ----
     if (sprite_vert_.IsValid() && sprite_frag_.IsValid() && viewport_rp_ != VK_NULL_HANDLE
         && sprite_ubo_layout_.IsValid()) {
-        auto bindings = scene::GetSpriteVertexBindings();
-        auto attrs = scene::GetSpriteVertexAttributes();
-
-        VkDynamicState dynamic_states[] = {
-            VK_DYNAMIC_STATE_VIEWPORT,
-            VK_DYNAMIC_STATE_SCISSOR
-        };
-
-        VkDescriptorSetLayout layouts[2] = {
-            sprite_ubo_layout_.Get(),
-            ResourceManager::Get().GetSamplerLayout()
-        };
-
-        renderer::Pipeline::Config pipe_config = {};
-        pipe_config.render_pass = viewport_rp_;
-        pipe_config.vert = &sprite_vert_;
-        pipe_config.frag = &sprite_frag_;
-        pipe_config.vertex_bindings = bindings.data();
-        pipe_config.vertex_binding_count = (uint32_t)bindings.size();
-        pipe_config.vertex_attributes = attrs.data();
-        pipe_config.vertex_attribute_count = (uint32_t)attrs.size();
-        pipe_config.dynamic_states = dynamic_states;
-        pipe_config.dynamic_state_count = 2;
-        pipe_config.viewport_width = (float)viewport_w_;
-        pipe_config.viewport_height = (float)viewport_h_;
-        pipe_config.cull_mode = VK_CULL_MODE_NONE;
-        pipe_config.descriptor_set_layouts = layouts;
-        pipe_config.descriptor_set_layout_count = 2;
-
-        // ViewMode push constant（sprite.frag: 0=Lit 1=Unlit）
-        VkPushConstantRange pc_range = {};
-        pc_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        pc_range.offset = 0;
-        pc_range.size = sizeof(int);
-        pipe_config.push_constant_ranges = &pc_range;
-        pipe_config.push_constant_range_count = 1;
-
-        sprite_pipeline_.Create(&renderer_, pipe_config, allocator_);
+        renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rp_, sprite_vert_, sprite_frag_,
+                                       sprite_ubo_layout_, ResourceManager::Get().GetSamplerLayout(),
+                                       (float)viewport_w_, (float)viewport_h_,
+                                       VK_POLYGON_MODE_FILL, sprite_pipeline_);
 
         // Wireframe 变体：同配置仅多边形模式为线框（需 fillModeNonSolid 特性）
         if (renderer_.IsWireframeSupported()) {
-            pipe_config.poly_mode = VK_POLYGON_MODE_LINE;
-            sprite_pipeline_wireframe_.Create(&renderer_, pipe_config, allocator_);
+            renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rp_, sprite_vert_, sprite_frag_,
+                                           sprite_ubo_layout_, ResourceManager::Get().GetSamplerLayout(),
+                                           (float)viewport_w_, (float)viewport_h_,
+                                           VK_POLYGON_MODE_LINE, sprite_pipeline_wireframe_);
         }
         ctx_.GetViewport().SetWireframeSupported(renderer_.IsWireframeSupported());
     }
 
     // ---- Create Quad Vertex Buffer ----
-    struct Vertex { float x, y, u, v; };
-    Vertex quad[6] = {
-        {-16.0f, -16.0f, 0.0f, 0.0f}, { 16.0f, -16.0f, 1.0f, 0.0f}, { 16.0f,  16.0f, 1.0f, 1.0f},
-        {-16.0f, -16.0f, 0.0f, 0.0f}, { 16.0f,  16.0f, 1.0f, 1.0f}, {-16.0f,  16.0f, 0.0f, 1.0f},
-    };
-    if (sprite_vb_.Create(&renderer_, sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_)) {
-        sprite_vb_.Upload(quad, sizeof(quad));
-    }
+    renderer::CreateSpriteQuadVB(renderer_, allocator_, sprite_vb_);
 
-    // ---- Create Sprite Instance Buffer ----
-    // Host-visible buffer large enough for 4096 sprites per batch.
-    constexpr VkDeviceSize kMaxSpriteInstances = 4096;
-    constexpr VkDeviceSize kInstanceStride = sizeof(float) * 20;
-    sprite_instance_vb_.Create(&renderer_, kMaxSpriteInstances * kInstanceStride,
-                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
-
-    // ---- Create Tilemap Dummy Instance Buffer ----
+    // ---- Create Sprite Instance Buffer + Tilemap Dummy Instance Buffer ----
     // The tilemap shares the sprite pipeline, which expects instance data at
     // binding 1. Bind a zeroed buffer so no stale sprite instance data is read.
-    tilemap_dummy_instance_vb_.Create(&renderer_, kInstanceStride,
-                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true, allocator_);
-    {
-        // Identity instance data: no world offset, no UV offset, unit frame/scale, white color.
-        float identity_instance[20] = {
-            0.0f, 0.0f,   // iWorldPos
-            0.0f, 0.0f,   // iUVOffset
-            1.0f, 1.0f,   // iFrameScale
-            1.0f, 1.0f,   // iScale
-            1.0f, 1.0f, 1.0f, 1.0f,  // iColor
-            0.0f, 0.0f, 1.0f, 1.0f,  // iAtlasRect（identity = 整图）
-            0.5f, 0.5f,              // iPivotFlip: pivot 居中
-            0.0f, 0.0f               // iPivotFlip: 不翻转
-        };
-        tilemap_dummy_instance_vb_.Upload(identity_instance, sizeof(identity_instance));
-    }
+    renderer::CreateSpriteInstanceBuffers(renderer_, allocator_, sprite_instance_vb_, tilemap_dummy_instance_vb_);
 
     EDITOR_LOG("EditorApplication::OnInit about to load tilesets...");
     // ---- Load tilesets from project ----
@@ -533,7 +413,7 @@ void EditorApplication::OnInit()
     sprite_cfg_.layout = sprite_pipeline_.GetLayout();
     sprite_cfg_.quad_vb = sprite_vb_.Get();
     sprite_cfg_.instance_vb = &sprite_instance_vb_;
-    sprite_cfg_.instance_vb_size = kMaxSpriteInstances * kInstanceStride;
+    sprite_cfg_.instance_vb_size = renderer::kMaxSpriteInstances * renderer::kSpriteInstanceStride;
     sprite_cfg_.ubo_set = sprite_ubo_set_.Get();
 
     sprite_cfg_.get_texture_ds = SpriteGetTextureDS;
@@ -572,7 +452,7 @@ void EditorApplication::OnShutdown()
     DestroyViewportRenderTarget();
     DestroyViewportRenderPass();
 
-    MG_VulkanImGui_Shutdown(renderer_, swapchain_);
+    gameui::MG_VulkanImGui_Shutdown(renderer_, swapchain_);
 
     EDITOR_LOG("EditorApplication::OnShutdown exit");
 }
@@ -580,7 +460,7 @@ void EditorApplication::OnShutdown()
 void EditorApplication::BeginFrame()
 {
     // swapchain 重建 + ImGui NewFrame；resize 后重建 Viewport 离屏渲染目标
-    if (MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_)) {
+    if (gameui::MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_)) {
         DestroyViewportRenderTarget();
         CreateViewportRenderTarget();
     }
@@ -718,7 +598,7 @@ void EditorApplication::EndFrame()
         }
 
         // --- ② Render ImGui (swapchain) ---
-        MG_VulkanImGui_RenderFrame(swapchain_, cmd, draw_data, clear_color_);
+        gameui::MG_VulkanImGui_RenderFrame(swapchain_, cmd, draw_data, clear_color_);
 
         swapchain_.SubmitAndPresent(cmd);
     }
@@ -741,7 +621,7 @@ bool EditorApplication::OnProcessEvent(SDL_Event* event)
         }
     }
 
-    MG_VulkanImGui_ProcessEvent(GetWindow(), event, swapchain_);
+    gameui::MG_VulkanImGui_ProcessEvent(GetWindow(), event, swapchain_);
     return false;
 }
 

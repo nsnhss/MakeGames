@@ -2,6 +2,7 @@
 #include "src/editor/panel.h"
 #include "src/scene/entity.h"
 #include "core/math/vec2.h"
+#include "gameui/playmode_ui.h"
 #include <cstdint>
 
 namespace mg {
@@ -49,10 +50,6 @@ public:
     void Draw() override;
 
 private:
-    // Play Mode 覆盖层（实现见 viewport_panel_playmode.cpp）
-    void DrawShopOverlay();
-    void DrawBattleOverlay();
-
     EditorContext& ctx_;
     GizmoState gizmo_;
     scene::EntityID rc_target_entity_ = 0;
@@ -73,9 +70,8 @@ private:
     scene::World* pending_terrain_world_ = nullptr;
     scene::EntityID pending_terrain_entity_ = 0;
 
-    // Play Mode — Pause 子菜单状态
-    enum class PauseSub { None, SaveSlots, LoadSlots, Items, Status };
-    PauseSub pause_sub_ = PauseSub::None;
+    // Play Mode — Pause 子菜单状态（枚举定义在 gameui/playmode_ui.h）
+    gameui::PauseSub pause_sub_ = gameui::PauseSub::None;
 };
 
 } // namespace editor

@@ -8,7 +8,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "backends/imgui_impl_sdl2.h"
-#include "src/editor/imgui/mg_imgui_theme.h"
+#include "src/gameui/mg_imgui_theme.h"
 #include "src/editor/imgui/mg_imgui_extensions.h"
 
 #include <filesystem>
@@ -1297,8 +1297,8 @@ void LauncherWindow::DrawSettingsPage() {
     int prev_theme = theme_index_;
     if (ImGui::Combo("##theme", &theme_index_, "暗色\0亮色\0")) {
         if (theme_index_ != prev_theme) {
-            if (theme_index_ == 0) mg::editor::MG_ApplyTheme_UE5Dark();
-            else mg::editor::MG_ApplyTheme_UE5Light();
+            if (theme_index_ == 0) mg::gameui::MG_ApplyTheme_UE5Dark();
+            else mg::gameui::MG_ApplyTheme_UE5Light();
         }
     }
     ImGui::PopItemWidth();

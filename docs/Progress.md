@@ -1,7 +1,7 @@
 # 开发进度与注意事项
 
 > **重要变更（2026-05-22）**：自研 UI 框架（`mg::uifw` / `src/ui_framework/`）已彻底废弃并删除。
-> 当前路线：直接修改 ImGui 源码实现 UE5 级编辑器界面。详见 `docs/ImGuiUE5_Roadmap.md`。
+> 当前路线：直接修改 ImGui 源码实现 UE5 级编辑器界面。详见 `docs/archive/ImGuiUE5_Roadmap.md`（已归档）。
 
 ---
 
@@ -28,7 +28,7 @@
 - UE5 风格使用明确的层级：`#0F0F0F` → `#151515` → `#1A1A1A` → `#212121`，差异足够清晰。
 
 ### 4. Windows 编译环境 PATH 问题
-- 详见 `docs/AgentNotes.md`。高频踩坑点：Shell 直接调用 ninja/g++ 前必须设置 PATH，否则 `cc1plus.exe` 静默崩溃（返回码 1，无任何输出）。
+- 详见根目录 `AGENTS.md`。高频踩坑点：Shell 直接调用 ninja/g++ 前必须设置 PATH，否则 `cc1plus.exe` 静默崩溃（返回码 1，无任何输出）。
 
 ### 5. ImGui 样式栈与动态主题切换（2026-05-27）
 - **绝对不要**在 `PushStyleColor(...)` / `PopStyleColor()` 的保护区内调用主题切换函数（如 `MG_ApplyTheme_UE5Dark()`）。
@@ -710,7 +710,7 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 ## Phase Q：编辑器 UX 重构 + 创建体系 ✅ 已完成（2026-06-16）
 
-基于 `docs/QualityOverhaul.md` 阶段二、三实施。
+基于 `docs/archive/QualityOverhaul.md` 阶段二、三实施。
 
 ### Q1：Content Browser 删除
 - [x] 删除 `src/editor/panels/content_browser_panel.h/.cpp`
@@ -766,7 +766,7 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 ## 阶段五：导出系统 ✅ 已完成（2026-06-24）
 
-基于 [`docs/QualityOverhaul.md`](QualityOverhaul.md) 阶段五实施。
+基于 [`docs/archive/QualityOverhaul.md`](archive/QualityOverhaul.md) 阶段五实施。
 
 ### 5.1 Runtime 剥离
 - [x] `engine_runtime` 静态库（零 ImGui 依赖）与 `engine_editor` 分离
@@ -888,7 +888,7 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 ## 下一阶段候选（旧清单，均已完成或仍待定）
 
-- ~~编辑器质量整改~~（2026-08-14 **已全部完成**：评估见 [`docs/Evaluation_2026-08.md`](Evaluation_2026-08.md)；6 阶段方案 A 文档 / B 死代码清理 / C 工程化 / D 功能补全 / E 测试网（17 tests 全绿） / F `EditorContext` 拆分为 8 个组件 + 聚合门面，cpp 由 1194 行减至 223 行）
+- ~~编辑器质量整改~~（2026-08-14 **已全部完成**：评估见 [`docs/archive/Evaluation_2026-08.md`](archive/Evaluation_2026-08.md)；6 阶段方案 A 文档 / B 死代码清理 / C 工程化 / D 功能补全 / E 测试网（17 tests 全绿） / F `EditorContext` 拆分为 8 个组件 + 聚合门面，cpp 由 1194 行减至 223 行）
 - ~~`ViewMode`（Lit/Unlit/Wireframe）仅为标志位、无真实渲染分支~~（2026-08-14 已实现：Lit=纹理×tint、Unlit=纯纹理原色（sprite.frag push constant）、Wireframe=线框管线变体（fillModeNonSolid，设备不支持时按钮禁用）；视口工具栏入口已恢复；着色器编译脚本 `tools/compile_shaders.ps1`）
 - ~~DetailsPanel / ConsolePanel 占位实现待接真实数据~~（2026-08-14 已接入真实 ECS 数据与引擎日志）
 - ~~`EditorContext` 去单例化~~（2026-08-14 已完成：`Get()` 单例删除，77 处调用改为引用注入；Context 由 `editor/main.cpp` 栈持有，沿 EditorApplication → EditorLayer → EditorApp → 8 面板构造链下传；CommandHistory/SceneSession 组件经 `Bind()` 注入协作者；4 个无订阅者的死回调已清理）
@@ -999,7 +999,104 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 ---
 
-> **最后更新**：2026-09-14（事件触发器补齐 OnExit/OnUpdate/OnInput/OnCollision + 编译警告清零；单 TU 验证干净，全量 build+ctest 待统一执行）
+## 阶段 A：game.exe 可玩化 ✅（2026-09-14，全量验证待统一执行）
+
+目标：导出的 `game.exe` 从「只渲一层 tilemap 的查看器」升级为可玩运行时（标题画面/移动/事件/UI/存读档），与编辑器 Play Mode 同源。
+
+### A1 纯移动 + 数据库加载公共化
+
+- [x] `play_mode_controller.{h,cpp}` → `src/scene/`（namespace `mg::scene`）；`game_databases.h` → `src/resource/`（namespace `mg`）
+- [x] 新建 `resource/game_databases.cpp`：`GameDatabases::LoadFromDirectory(data_dir)` 一次加载 5 库；`EditorContext::OpenProject` 改调它
+- [x] CMake：两 cpp 入 `engine_runtime`；editor 目标移除旧路径
+
+### A2 GameRuntime 下沉 + EditorLayer 薄化
+
+- [x] 新建 `scene/game_runtime.h/.cpp`（`engine_runtime`，零 ImGui/编辑器依赖）：`ISceneHost` 接口 + `GameRuntime`（Update 全编排：标题请求消费、移动+AABB 碰撞、相机跟随+clamp、Animator/Tween、EventSystem、Fade 场景切换、Escape/Return SDL 边沿、存读档）
+- [x] `editor_layer.cpp` 重写为薄壳：实现 `ISceneHost` 委托 SceneSession（保留编辑器副作用），play 中 `runtime_.Update(dt)`；快照/面板显隐留在编辑器层
+- [x] **顺带修 bug**：Fade 场景切换分支漏 `SetSkillDatabase`（原 editor_layer 缺陷）；Escape 处理去重（原分散在 EditorLayer 与 ViewportPanel 两处）
+
+### A3 共享 UI 库 `engine_gameui`
+
+- [x] 新建 `gameui/playmode_ui.h/.cpp`：全部 Play Mode 覆盖层 UI（标题/暂停/对话/选项/商店/战斗/Toast/HUD/Fade）提取为纯函数 + `PlayUIContext` 显式参数，零 EditorContext 依赖；`PauseSub` 枚举移入 `gameui`
+- [x] `viewport_panel.cpp` Play Mode 段落改为组装 `PlayUIContext` + 调共享函数（文件 832 → 717 行）；`viewport_panel_playmode.cpp` 删除
+- [x] CMake：新建 `engine_gameui` 静态库 = IMGUI_SOURCES + `mg_imgui_backend.cpp` + `mg_imgui_theme.cpp`（backend 硬依赖 theme 的字体/主题，随库迁入）+ `playmode_ui.cpp`；editor exe 不再直编 IMGUI_SOURCES，改为链接 engine_gameui；game 链接 engine_gameui + 复制 assets/fonts
+
+### A4 game.exe 可玩化
+
+- [x] `game_main.cpp` 重写（567 → 约 540 行）：`GameApplication : Application, scene::ISceneHost`
+  - `MG_VulkanImGui_*` 助手接入（ImGui 上下文/主题/中文字体/事件转发/swapchain 重建）；`io.IniFilename=nullptr`（不污染导出目录）；关闭 ImGui 键盘导航
+  - 根布局：读根 `project.json`（窗口标题/分辨率取自 manifest），`ResourceManager::SetProjectPath(".")`，`GameDatabases::LoadFromDirectory("data")`
+  - 自持 `PlayModeController` + `GameRuntime`（project_root="."），启动即 `SetState(Playing)` + `EnterPlayMode()`（标题画面）；ESC 改由 GameRuntime 切暂停，退出走菜单 Quit/窗口关闭
+  - 全窗口 ImGui 覆盖层（`##play_ui` 隐形窗）调 gameui:: 全家桶；世界与 UI 同一 render pass（世界先画，`ImGui_ImplVulkan_RenderDrawData` 殿后）
+  - **修**：`RebuildTilemapVB` 多层渲染（layer 外循环保绘制序，原只渲 `layers[0]`）；TweenAnimation 由 GameRuntime 接管（原 game 侧声明了但从未 Update）
+
+### A5 导出对齐 + 文档
+
+- [x] `export_game.cpp`：布局核对 OK（整项目复制 → 根 project.json + maps/ + data/；saves/ 由运行时自建）；补复制引擎 `assets/fonts`（game.exe 的 MG_LoadFonts 需要 fa-solid-900.ttf）；删死代码 `WideToUtf8`（-Wunused-function）
+- [x] `GameDataModel.md` 5.1 触发器表更新为实际实现状态（含局限注记）
+
+### 统一验证修复（build.ps1 all + test 全绿：99 tests / 546 checks）
+
+- [x] launcher 链接 `engine_gameui`（backend/theme 迁出库后 launcher 缺符号）
+- [x] `ExecuteContext` 非循环页执行完最后一个动作当帧即 `finished`（原空转一帧，OnUpdate 被去重挡成隔帧触发）
+- [x] `PollAreaTriggers` 进入帧补发 `OnTouch`（进入即接触语义）
+
+---
+
+## 阶段 B：.pak 资源打包 + 示例项目随发布包 ✅（2026-09-30）
+
+### B1 .pak 资源打包
+
+- [x] `resource/vfs.h/.cpp`（engine_runtime）：自定义 `.pak` 格式（头部 MGPK+version+count+index_offset / 数据 blob / 尾部索引），`MountPak`/`ReadFile`（pak 命中读包、未命中透明落盘）/`Exists`/`WritePak`；路径规范化统一 `/` + 去 `./`；Win32 宽字符读盘（兼容中文路径，从 texture.cpp 收编）
+- [x] 运行时全部读取点接入（读字节→内存解析，无新增依赖）：纹理 `ReadFileBytes` choke point；`DataManager::Load/LoadJsonRaw`（pak 挂载时热重载退化）；音频 `LoadSound` 统一 vfs 读字节 → WAV `SDL_LoadWAV_RW(SDL_RWFromMem)` / OGG `stb_vorbis_open_memory` / MP3 `drmp3_open_memory_...`；Lua `DoFile` → `luaL_loadbuffer`+`lua_pcall`；shader `LoadSpvFile`；fa-solid 图标字体 → `AddFontFromMemoryTTF`（msyh 系统字体不动）
+- [x] `game.exe`：`EnsurePakMounted()`（cwd 存在 `data.pak` 即挂载，MakeDesc/OnInit 幂等双调）；无 pak 时松散文件照常运行
+- [x] 导出：`ExportGame(ctx, dir, pack_resources)`——复制改**白名单**（`project.json`+`maps/data/assets/prefabs/scenes`，顺带治掉 `imgui.ini`/`saves/`/`.cache/` 污染）；pack=true 时 `WritePak` 后删松散文件，输出根只留 `game.exe + SDL2.dll + vulkan-1.dll + data.pak`；File 菜单加「导出时打包资源 (.pak)」勾选项（默认开）
+- [x] `build.ps1 all` 补 `game` 目标；`mg_imgui_theme.cpp` 存量 -Wunused-but-set-variable 调色板常量加 `[[maybe_unused]]`
+- [x] 测试 `tests/test_pak.cpp` 4 用例：round-trip / 路径规范化（`./`、反斜杠）/ 磁盘回退+Exists / 坏包 magic 拒绝
+
+### B2 示例项目随发布包
+
+- [x] `demo_project/` 入库（`.gitignore` 移除排除项；`tools/generate_demo_project.py` 本地生成后提交，~117KB，免除打包机 Python+PIL 依赖）
+- [x] `tools/package_release.ps1`：构建 → 组装 `release/MakeGames/`（三 exe + SDL2.dll + assets + demo_project）→ zip；**教训**：PS 5.1 无 BOM 按 ANSI 读 .ps1，含中文注释必须 UTF-8 BOM
+- [x] CI：新增 Package（组装 zip）+ `actions/upload-artifact` 上传 `MakeGames-windows`
+
+**测试**：全量编译（launcher/editor/game/engine_tests）+ ctest 全绿：**103 tests / 573 checks**。
+
+---
+
+## 阶段 C：文档卫生收尾 ✅（2026-09-30，纯文档/仓库整理，无代码变更）
+
+- [x] 历史文档归档 `docs/archive/`（git mv 保历史）：`2DFrameworkPlan` / `EnginePlan` / `ImGuiUE5_Roadmap` / `NextPhasePlan_v24` / `QualityOverhaul` / `Evaluation_2026-08`；现存文档 = `Progress.md`（事实源）+ `GameDataModel.md` + `TilemapDesign.md`
+- [x] 交叉引用修复：Progress.md / GameDataModel.md / README.md / archive 内部相对链接全部更新
+- [x] 新建根 `AGENTS.md`：吸收 `docs/AgentNotes.md`（PATH 坑、禁 Start-Process）并补充单 TU 验证模式、零警告纪律、PS 写文件教训、git 纪律、结构速览；`docs/AgentNotes.md` 删除
+- [x] 删除一次性/过时文件：`fix_path.ps1`（本机 PATH 修复）、`launcher/dev_log.txt`（5 月手写日记，已被 Progress.md 取代）
+- [x] README：功能概览补 Play Mode 同源运行时 / 导出 pak / 发布包；文档章节改为现行 + 归档结构
+
+---
+
+## 阶段 D：全项目模块拆分 + 逐模块精修（进行中）
+
+### D0 架构修正与重复合并 ✅
+
+- [x] **D0-1 破 scene↔script 环**：`event_system.h` 删 `#include "script/script_engine.h"` → 前置声明（头内只有 `ScriptEngine*` 成员/参数），`event_system.cpp` 补 include；5 个相关 TU 单编译验证 OK
+- [x] **D0-2 `debug_log.h` 迁移**：`src/editor/` → `src/core/`（git mv）；重写去 `mg::editor` 命名空间 + 删死代码 `EditorDebugLog`；9 处引用批量更新（含 resource/data_manager 对 editor 头的越界 include）；**此后 engine_runtime 零 editor include**
+- [x] **D0-3 `mg_imgui_backend` + `mg_imgui_theme` 归位**：`src/editor/imgui/` → `src/gameui/`（git mv ×4）；命名空间 `mg::editor` → `mg::gameui`；4 调用点（editor_application / game_main / launcher_application / launcher_window）+ CMake engine_gameui 路径同步
+- [x] **D0-4 Tilemap VB 构建合并**：新建 `scene/systems/tilemap_mesh_builder.h/.cpp`（`BuildTilemapMesh`：layer 外循环=以 game 侧多层正确版为准，修掉 editor 版 tileset 外循环的层序分歧）；tileset 数据源由回调 `get_tileset(name, map_tw, map_th)` 注入（editor=TilesetAsset+真实纹理尺寸，game=tilesets.json+地图 tile 尺寸）；`respect_layer_visibility` 区分 editor（隐藏层不画）/game；共享 `TilemapVertex`/`TilemapBatch`/`TilesetRenderInfo`；editor 与 game 两处 `RebuildTilemapVB` 均瘦身为「回调填充 + VB 上传」
+- [x] **D0-5 Sprite 管线创建去重**：新建 `renderer/sprite_pipeline_setup.h/.cpp`（`CreateSpriteUBOLayoutAndSet`/`CreateSpriteUBOBuffer`/`CreateSpritePipeline`(poly_mode 参数化，editor wireframe 变体复用）/`CreateSpriteQuadVB`/`CreateSpriteInstanceBuffers` + `kMaxSpriteInstances`/`kSpriteInstanceStride`）；editor/game 两套 ~90 行手写样板各收敛为 4 次调用；`LoadSpvFile` 有意不合（editor 有 exe 目录回退、无 pak 需求）
+- [x] **D0-6 ActionCmd 注册表**：新建 `scene/action_cmd_registry.h`（`kActionCmdRegistry[28]` = cmd + 序列化名（格式冻结）+ 显示名；`ActionCmdToSerializedName`/`GetActionCmdDisplayName`/`ActionCmdFromSerializedName`）；收敛 scene_serializer 序列化/反序列化两处 + event_editor_panel 显示名/菜单数组两处；**顺手修复**（标注）：原 serializer switch 漏 `ShowChoices`/`MoveEntity`/`SetSwitch`（存档丢成 "Unknown"），注册表收敛后自愈
+- [x] **D0-7 常量统一**：`scene/constants.h` 新增 `kPlayerCollisionHalfExtent=14`（event_system 与 game_runtime 共用）/`kEventTouchHalfExtent=16`/`kPickRadius=16`（viewport_panel 点选×2）；`project_schema.h` 新增 `kDefaultMapWidth/Height=20/15`、`kDefaultTileSize=32`、`kDefaultDisplayWidth/Height=1280/720`，收敛 ProjectManifest 默认值 + scene_session/editor_context 默认参数 + editor_project_manager + game_main 回退
+
+---
+
+> **最后更新**：2026-09-07（阶段 D0：架构修正与重复合并——破 scene↔script 环、debug_log 归 core、imgui backend/theme 归 gameui、tilemap 构建单实现、sprite 管线去重、ActionCmd 注册表、常量统一）
+>
+> ~~最后更新：2026-09-30~~（阶段 C：文档卫生——历史文档归档 docs/archive/、根 AGENTS.md 建立、一次性文件清理、README 刷新）
+>
+> ~~最后更新：2026-09-30~~（阶段 B：.pak 资源打包（vfs + 导出集成）+ demo_project 入库 + 发布包脚本/CI artifact；编译+ctest 全绿 103/573）
+>
+> ~~最后更新：2026-09-14~~（阶段 A：game.exe 可玩化——GameRuntime 下沉 + engine_gameui 共享 UI + game_main 重写；全量 build + ctest 全绿 99/546）
+>
+> ~~最后更新：2026-09-14~~（事件触发器补齐 OnExit/OnUpdate/OnInput/OnCollision + 编译警告清零）
 >
 > ~~最后更新：2026-09-14~~（TD-1：共享 Vulkan+ImGui 初始化提取到 engine_editor；编译+ctest 全绿）
 >

@@ -31,3 +31,19 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "release/MakeGames"
+          New-Item -ItemType Directory -Path $pkg -Force | Out-Null
+          Copy-Item build/launcher/launcher.exe, build/editor/editor.exe, build/src/game.exe, build/launcher/SDL2.dll $pkg
+          Copy-Item assets $pkg/assets -Recurse
+          Copy-Item demo_project $pkg/demo_project -Recurse
+          Compress-Archive -Path $pkg -DestinationPath release/MakeGames-ci.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MakeGames-windows
+          path: release/MakeGames-ci.zip

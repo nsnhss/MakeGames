@@ -13,13 +13,11 @@ set(EDITOR_PANEL_SOURCES
     ${CMAKE_SOURCE_DIR}/src/editor/panels/tile_palette_panel.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/panels/tile_autotile.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_panel.cpp
-    ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_panel_playmode.cpp
 )
 
 set(EDITOR_SOURCES
     main.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/command_history.cpp
-    ${CMAKE_SOURCE_DIR}/src/editor/play_mode_controller.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/viewport_state.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/tileset_editor.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/scene_session.cpp
@@ -38,7 +36,7 @@ set(EDITOR_SOURCES
     ${EDITOR_PANEL_SOURCES}
 )
 
-add_executable(editor ${EDITOR_SOURCES} ${IMGUI_SOURCES})
+add_executable(editor ${EDITOR_SOURCES})
 
 target_include_directories(editor PRIVATE
     ${MG_INCLUDE_DIRS}
@@ -52,6 +50,7 @@ target_link_directories(editor PRIVATE
 target_link_libraries(editor PRIVATE
     engine_runtime
     engine_editor
+    engine_gameui
     ${LUA_TARGET}
 )
 

@@ -1,4 +1,6 @@
 #include "scene/event_system.h"
+#include "scene/constants.h"
+#include "script/script_engine.h"
 #include "scene/components/transform.h"
 #include "scene/components/movement.h"
 #include "scene/components/tilemap.h"
@@ -58,6 +60,8 @@ void EventSystem::Update(float dt) {
 // ---- 触发接口 ----
 
 void EventSystem::TriggerOnStart() {
+    // 标记已触发：防止手动调用后 Update 首帧再触发一次（修复 OnStart 双重触发）
+    on_start_triggered_ = true;
     std::vector<EntityID> entities;
     world_->Query<EventTrigger>(entities);
     for (EntityID e : entities) {
@@ -221,8 +225,9 @@ void EventSystem::PollAreaTriggers() {
         return;
     }
 
-    constexpr float PLAYER_HALF = 14.0f; // 与 play mode 碰撞半宽一致
-    constexpr float EVENT_HALF  = 16.0f; // 事件点半径（32px tile 的半格）
+    // scene/constants.h：与 play mode 碰撞半宽一致；事件点半径 = 32px tile 半格
+    constexpr float PLAYER_HALF = kPlayerCollisionHalfExtent;
+    constexpr float EVENT_HALF  = kEventTouchHalfExtent;
 
     std::vector<EntityID> events;
     world_->Query<EventTrigger>(events);
@@ -237,13 +242,15 @@ void EventSystem::PollAreaTriggers() {
             cur.insert(e);
     }
 
-    // 差分：新进入 → OnEnter + OnCollision；持续重叠 → OnTouch；新离开 → OnExit
+    // 差分：新进入 → OnEnter + OnCollision + OnTouch（进入帧也算接触）；
+    // 持续重叠 → OnTouch；新离开 → OnExit
     for (EntityID e : cur) {
         if (overlapping_events_.contains(e)) {
             TriggerOnTouch(e, player);
         } else {
             TriggerOnEnter(e);
             TriggerOnCollision(e, player);
+            TriggerOnTouch(e, player);
         }
     }
     for (EntityID e : overlapping_events_) {
@@ -368,6 +375,9 @@ void EventSystem::ExecuteContext(EventContext& ctx, float dt) {
     // 如果不是 wait/message/move/shop/battle，自动推进到下一个动作
     if (!ctx.waiting && !ctx.message_pending && !ctx.choices_pending && !ctx.move_pending && !ctx.finished && !shop_pending_ && battle_state_ == BattleState::None) {
         ++ctx.action_index;
+        // 非循环页执行完最后一个动作当帧即结束，避免空转一帧
+        // （否则 OnUpdate 等每帧轮询触发器会被 HasActiveContextFor 去重挡掉，隔帧才能再触发）
+        if (ctx.action_index >= page.actions.size() && !ctx.loop_active) ctx.finished = true;
     }
 }
 

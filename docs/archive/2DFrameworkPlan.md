@@ -1,9 +1,9 @@
 # MakeGames 2D 框架规划
 
-> ⚠️ **历史快照**：本文档为早期框架规划，部分设计与实现已漂移（Box2D 已否决、横板模式暂停且无实现、Tileset passage/Prefab 等描述与现状不符），**不再维护**。实际进度以 [`Progress.md`](Progress.md) 为唯一事实源。
+> ⚠️ **历史快照**：本文档为早期框架规划，部分设计与实现已漂移（Box2D 已否决、横板模式暂停且无实现、Tileset passage/Prefab 等描述与现状不符），**不再维护**。实际进度以 [`Progress.md`](../Progress.md) 为唯一事实源。
 
 > 本文档是**架构规划**（项目目录结构、地图/Tileset 格式、编辑器工作流、运行时架构、渲染管线）。
-> Component 与事件系统的**字段级详细定义**见 [`docs/GameDataModel.md`](GameDataModel.md)。
+> Component 与事件系统的**字段级详细定义**见 [`docs/GameDataModel.md`](../GameDataModel.md)。
 
 > 参考对象：RPG Maker MV/MZ（数据驱动、JSON 明文）、Godot（场景树、文件即资源）、GameMaker（资源树、Room/Object 分离）、Unity 2D（Prefab/Scene、GUID 引用）
 

@@ -1,0 +1,16 @@
+[
+    {
+        "id": "fireball",
+        "name": "火球术",
+        "mp_cost": 10,
+        "damage": 30,
+        "description": "发射火球"
+    },
+    {
+        "id": "heal",
+        "name": "治愈",
+        "mp_cost": 8,
+        "damage": -20,
+        "description": "恢复生命"
+    }
+]

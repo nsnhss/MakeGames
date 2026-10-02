@@ -4,7 +4,7 @@
 #include "viewport_state.h"
 #include "tileset_editor.h"
 #include "editor_project_manager.h"
-#include "debug_log.h"
+#include "core/debug_log.h"
 #include "scene/scene_serializer.h"
 #include "scene/components/transform.h"
 #include "scene/components/name.h"

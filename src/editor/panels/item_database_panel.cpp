@@ -1,5 +1,5 @@
 #include "item_database_panel.h"
-#include "src/editor/game_databases.h"
+#include "resource/game_databases.h"
 #include "src/editor/imgui/mg_imgui_icons.h"
 #include "src/editor/imgui/mg_imgui_panel.h"
 #include "src/editor/imgui/mg_imgui_extensions.h"

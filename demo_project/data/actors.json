@@ -1,0 +1,20 @@
+[
+    {
+        "id": "player",
+        "name": "勇者",
+        "hp": 100,
+        "mp": 30,
+        "atk": 15,
+        "def": 8,
+        "sprite": "assets/sprites/Player.png"
+    },
+    {
+        "id": "elder",
+        "name": "村长",
+        "hp": 999,
+        "mp": 0,
+        "atk": 1,
+        "def": 99,
+        "sprite": "assets/sprites/NPC_Elder.png"
+    }
+]

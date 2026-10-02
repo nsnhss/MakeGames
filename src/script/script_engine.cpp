@@ -1,6 +1,7 @@
 #include "script/script_engine.h"
 #include "src/core/log.h"
 #include "audio/audio_manager.h"
+#include "resource/vfs.h"
 #include "scene/event_system.h"
 #include "scene/world.h"
 #include "scene/components/name.h"
@@ -290,7 +291,16 @@ void ScriptEngine::BindAPI() {
 
 bool ScriptEngine::DoFile(const std::string& path) {
     if (!L_) Initialize();
-    if (luaL_dofile(L_, path.c_str()) != LUA_OK) {
+    // 经 VFS 读字节（pak 命中读包，否则落盘），loadbuffer + pcall 等价于 luaL_dofile
+    std::vector<uint8_t> bytes;
+    if (!vfs::ReadFile(path, bytes)) {
+        MG_LOG_ERROR("[Lua] cannot read script: " << path);
+        return false;
+    }
+    std::string chunk_name = "@" + path; // 调试信息里的来源名
+    if (luaL_loadbuffer(L_, reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                        chunk_name.c_str()) != LUA_OK ||
+        lua_pcall(L_, 0, LUA_MULTRET, 0) != LUA_OK) {
         MG_LOG_ERROR("[Lua] " << lua_tostring(L_, -1));
         lua_pop(L_, 1);
         return false;

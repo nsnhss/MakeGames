@@ -1,4 +1,4 @@
-#include "editor/play_mode_controller.h"
+#include "scene/play_mode_controller.h"
 #include "scene/world.h"
 #include "scene/components/transform.h"
 #include "third_party/json.hpp"
@@ -7,23 +7,23 @@
 #include <vector>
 
 namespace mg {
-namespace editor {
+namespace scene {
 
-void PlayModeController::TakeSnapshot(scene::World* world) {
+void PlayModeController::TakeSnapshot(World* world) {
     play_snapshot_.clear();
     if (!world) return;
-    std::vector<scene::EntityID> entities;
+    std::vector<EntityID> entities;
     world->GetAllEntities(entities);
     for (auto e : entities) {
-        auto* t = world->GetComponent<scene::Transform>(e);
+        auto* t = world->GetComponent<Transform>(e);
         if (t) play_snapshot_[e] = t->position;
     }
 }
 
-void PlayModeController::RestoreSnapshot(scene::World* world) {
+void PlayModeController::RestoreSnapshot(World* world) {
     if (world) {
         for (auto& [e, pos] : play_snapshot_) {
-            auto* t = world->GetComponent<scene::Transform>(e);
+            auto* t = world->GetComponent<Transform>(e);
             if (t) t->position = pos;
         }
     }
@@ -49,5 +49,5 @@ PlayModeController::SaveSlotInfo PlayModeController::ReadSaveSlotInfo(
     return info;
 }
 
-} // namespace editor
+} // namespace scene
 } // namespace mg

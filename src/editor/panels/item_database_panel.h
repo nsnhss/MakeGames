@@ -1,12 +1,11 @@
 #pragma once
 #include "src/editor/panel.h"
+#include "resource/game_databases.h"
 #include <functional>
 #include <string>
 
 namespace mg {
 namespace editor {
-
-struct GameDatabases;
 
 class ItemDatabasePanel : public IPanel {
 public:

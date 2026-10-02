@@ -6,7 +6,6 @@
 #include "resource/actor_database.h"
 #include "resource/enemy_database.h"
 #include "resource/skill_database.h"
-#include "script/script_engine.h"
 #include "scene/components/event_trigger.h"
 #include "core/math/vec2.h"
 #include <vector>
@@ -17,6 +16,9 @@
 #include <utility>
 
 namespace mg {
+
+class ScriptEngine; // 前置声明破 scene↔script 头文件环（cpp 侧再 include）
+
 namespace scene {
 
 // 单个事件的执行上下文
