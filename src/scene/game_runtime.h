@@ -3,6 +3,7 @@
 #include "scene/event_system.h"
 #include "scene/systems/animator_system.h"
 #include "scene/systems/tween_animation_system.h"
+#include "scene/systems/player_movement_system.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -72,6 +73,7 @@ private:
     std::unique_ptr<EventSystem> event_system_;
     AnimatorSystem animator_system_;
     TweenAnimationSystem tween_animation_system_;
+    PlayerMovementSystem movement_system_;  // 含碰撞合并矩形缓存（场景切换时 Invalidate）
     std::string current_scene_rel_;  // 当前场景相对路径（存档用）
     bool prev_interact_key_ = false; // Return 上帧状态
     bool prev_pause_key_ = false;    // Escape 上帧状态

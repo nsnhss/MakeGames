@@ -115,6 +115,7 @@ public:
         }
         s->Initialize();
         scene_ = std::move(s);
+        primary_cam_entity_ = 0;  // 场景替换，主相机缓存失效
         tilemap_dirty_ = true;
         return true;
     }
@@ -160,6 +161,9 @@ private:
     gameui::PauseSub pause_sub_ = gameui::PauseSub::None;
 
     std::unique_ptr<scene::Scene> scene_;
+    // D3 优化：主相机实体缓存，避免 UpdateCameraUBO 每帧全实体扫描；
+    // LoadScene / 缓存实体失效（销毁或不再是 primary）时自动重扫。
+    scene::EntityID primary_cam_entity_ = 0;
     uint32_t viewport_w_ = kDefaultDisplayWidth;
     uint32_t viewport_h_ = kDefaultDisplayHeight;
     bool tilemap_dirty_ = true;
@@ -407,12 +411,20 @@ void GameApplication::UpdateCameraUBO() {
     if (!scene_ || !scene_->GetWorld()) return;
     auto* world = scene_->GetWorld();
 
+    // 优先使用缓存的主相机实体；失效（销毁 / 失去 primary）才全量重扫
     uint32_t cam_entity = 0;
-    std::vector<scene::EntityID> all;
-    world->GetAllEntities(all);
-    for (auto e : all) {
-        auto* cam = world->GetComponent<scene::Camera>(e);
-        if (cam && cam->is_primary) { cam_entity = e; break; }
+    if (primary_cam_entity_ != 0 && world->IsValid(primary_cam_entity_)) {
+        auto* cam = world->GetComponent<scene::Camera>(primary_cam_entity_);
+        if (cam && cam->is_primary) cam_entity = primary_cam_entity_;
+    }
+    if (cam_entity == 0) {
+        std::vector<scene::EntityID> all;
+        world->GetAllEntities(all);
+        for (auto e : all) {
+            auto* cam = world->GetComponent<scene::Camera>(e);
+            if (cam && cam->is_primary) { cam_entity = e; break; }
+        }
+        primary_cam_entity_ = cam_entity;
     }
 
     float vp[16];

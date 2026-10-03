@@ -19,6 +19,7 @@ add_executable(engine_tests
     test_spritesheet_grid.cpp
     test_event_triggers.cpp
     test_pak.cpp
+    test_player_movement.cpp
 )
 
 target_include_directories(engine_tests PRIVATE

@@ -2,11 +2,10 @@
 #include "third_party/json.hpp"
 #include "scene/world.h"
 #include "scene/action_commands.h"
-#include "resource/shop_database.h"
-#include "resource/actor_database.h"
-#include "resource/enemy_database.h"
-#include "resource/skill_database.h"
 #include "scene/components/event_trigger.h"
+#include "scene/game_variables.h"
+#include "scene/battle_session.h"
+#include "scene/shop_session.h"
 #include "core/math/vec2.h"
 #include <vector>
 #include <string>
@@ -63,17 +62,18 @@ public:
     void TriggerOnCollision(EntityID self, EntityID other);
     void TriggerOnVariableChange(const std::string& name);
 
-    // ---- 全局状态 ----
-    void SetVariable(const std::string& name, int value);
-    void SetVariable(const std::string& name, float value);
-    void SetVariable(const std::string& name, bool value);
-    int GetVariableInt(const std::string& name, int default_val = 0) const;
-    float GetVariableFloat(const std::string& name, float default_val = 0.0f) const;
-    bool GetVariableBool(const std::string& name, bool default_val = false) const;
+    // ---- 全局状态（转发 GameVariables；通知语义不变）----
+    void SetVariable(const std::string& name, int value)   { variables_.SetInt(name, value); }
+    void SetVariable(const std::string& name, float value) { variables_.SetFloat(name, value); }
+    void SetVariable(const std::string& name, bool value)  { variables_.SetBool(name, value); }
+    int GetVariableInt(const std::string& name, int default_val = 0) const { return variables_.GetInt(name, default_val); }
+    float GetVariableFloat(const std::string& name, float default_val = 0.0f) const { return variables_.GetFloat(name, default_val); }
+    bool GetVariableBool(const std::string& name, bool default_val = false) const { return variables_.GetBool(name, default_val); }
 
-    void SetSwitch(const std::string& name, bool value);
-    bool GetSwitch(const std::string& name, bool default_val = false) const;
+    void SetSwitch(const std::string& name, bool value) { variables_.SetSwitch(name, value); }
+    bool GetSwitch(const std::string& name, bool default_val = false) const { return variables_.GetSwitch(name, default_val); }
 
+    // 自开关：cache 存 GameVariables，同时同步 EventTrigger 组件（cpp 实现）
     void SetSelfSwitch(EntityID entity, char sw, bool value);
     bool GetSelfSwitch(EntityID entity, char sw, bool default_val = false) const;
 
@@ -107,72 +107,61 @@ public:
     };
     const std::unordered_map<std::string, HUDOverlay>& GetHUDOverlays() const { return hud_overlays_; }
 
-    // ---- 库存查询（AddItem/RemoveItem 操作的是 item_* 前缀的 int_variables_）----
-    std::vector<std::pair<std::string, int>> GetInventoryItems() const;
+    // ---- 库存查询（AddItem/RemoveItem 操作的是 item_* 前缀的 int 变量）----
+    std::vector<std::pair<std::string, int>> GetInventoryItems() const { return variables_.GetInventoryItems(); }
 
     // ---- 场景切换（TransferPlayer 跨场景）----
-    struct GlobalStateSnapshot {
-        std::unordered_map<std::string, int>    int_vars;
-        std::unordered_map<std::string, float>  float_vars;
-        std::unordered_map<std::string, bool>   bool_vars;
-        std::unordered_map<std::string, bool>   switches;
-        std::unordered_map<std::string, bool>   self_switches;
-    };
+    using GlobalStateSnapshot = GameVariables::Snapshot;
     bool HasPendingSceneTransition() const { return !pending_scene_transition_.empty(); }
     std::string ConsumePendingSceneTransition() { return std::exchange(pending_scene_transition_, {}); }
     int GetPendingSpawnX() const { return pending_spawn_x_; }
     int GetPendingSpawnY() const { return pending_spawn_y_; }
-    GlobalStateSnapshot TakeGlobalStateSnapshot() const;
-    void RestoreGlobalState(const GlobalStateSnapshot& snap);
+    GlobalStateSnapshot TakeGlobalStateSnapshot() const { return variables_.TakeSnapshot(); }
+    void RestoreGlobalState(const GlobalStateSnapshot& snap) { variables_.Restore(snap); }
 
     // 存档序列化
-    nlohmann::json SaveState() const;
-    void LoadState(const nlohmann::json& j);
+    nlohmann::json SaveState() const { return variables_.SaveToJson(); }
+    void LoadState(const nlohmann::json& j) { variables_.LoadFromJson(j); }
 
-    // ---- 商店系统 ----
-    void SetShopDatabase(const ShopDatabase* db) { shop_db_ = db; }
-    bool IsShopActive() const { return shop_pending_; }
-    const std::string& GetPendingShopId() const { return pending_shop_id_; }
-    void OpenShop(const std::string& shop_id);
-    void AcknowledgeShop();
-    void CloseShop();
-    bool BuyItem(const std::string& item_id, int price);
+    // ---- 商店系统（转发 ShopSession）----
+    void SetShopDatabase(const ShopDatabase* db) { shop_.SetDatabase(db); }
+    bool IsShopActive() const { return shop_.IsPending(); }
+    const std::string& GetPendingShopId() const { return shop_.PendingShopId(); }
+    void OpenShop(const std::string& shop_id) { shop_.Open(shop_id); }
+    void AcknowledgeShop() {} // 保留钩子：当前商店通过 CloseShop 结束，无需额外确认标记
+    void CloseShop() { shop_.Close(); }
+    bool BuyItem(const std::string& item_id, int price) { return shop_.Buy(item_id, price, variables_); }
 
-    // ---- 战斗系统 ----
-    enum class BattleState { None, Intro, PlayerTurn, EnemyTurn, Victory, Defeat };
-    struct BattleCombatant {
-        std::string id;
-        std::string name;
-        int hp = 0;
-        int max_hp = 0;
-        int mp = 0;
-        int max_mp = 0;
-        int atk = 0;
-        int def = 0;
-    };
-    void SetActorDatabase(const ActorDatabase* db) { actor_db_ = db; }
-    void SetEnemyDatabase(const EnemyDatabase* db) { enemy_db_ = db; }
-    void SetSkillDatabase(const SkillDatabase* db) { skill_db_ = db; }
+    // ---- 战斗系统（转发 BattleSession）----
+    using BattleState = BattleSession::State;
+    using BattleCombatant = BattleSession::Combatant;
+    void SetActorDatabase(const ActorDatabase* db) { battle_.SetActorDatabase(db); }
+    void SetEnemyDatabase(const EnemyDatabase* db) { battle_.SetEnemyDatabase(db); }
+    void SetSkillDatabase(const SkillDatabase* db) { battle_.SetSkillDatabase(db); }
     void SetScriptEngine(ScriptEngine* engine) { script_engine_ = engine; }
-    bool IsBattleActive() const { return battle_state_ != BattleState::None; }
-    BattleState GetBattleState() const { return battle_state_; }
-    const BattleCombatant& GetBattlePlayer() const { return battle_player_; }
-    const std::vector<BattleCombatant>& GetBattleEnemies() const { return enemies_; }
-    int GetBattleTarget() const { return battle_target_; }
-    void SetBattleTarget(int idx) { battle_target_ = idx; }
+    bool IsBattleActive() const { return battle_.IsActive(); }
+    BattleState GetBattleState() const { return battle_.GetState(); }
+    const BattleCombatant& GetBattlePlayer() const { return battle_.Player(); }
+    const std::vector<BattleCombatant>& GetBattleEnemies() const { return battle_.Enemies(); }
+    int GetBattleTarget() const { return battle_.Target(); }
+    void SetBattleTarget(int idx) { battle_.SetTarget(idx); }
     const BattleCombatant& GetCurrentTarget() const {
         static BattleCombatant empty;
-        if (battle_target_ >= 0 && battle_target_ < (int)enemies_.size()) return enemies_[battle_target_];
+        int t = battle_.Target();
+        const auto& enemies = battle_.Enemies();
+        if (t >= 0 && t < (int)enemies.size()) return enemies[t];
         return empty;
     }
-    const std::string& GetBattleLog() const { return battle_log_; }
-    void StartBattle(const std::string& enemy_id, int count, const std::string& player_actor_id);
-    void EndBattle(int result);
-    void PlayerAttack();
-    void PlayerUseSkill(const std::string& skill_id);
-    void PlayerUseItem();
-    void PlayerTryEscape();
-    void UpdateBattle(float dt);
+    const std::string& GetBattleLog() const { return battle_.Log(); }
+    void StartBattle(const std::string& enemy_id, int count, const std::string& player_actor_id) {
+        battle_.Start(enemy_id, count, player_actor_id, variables_);
+    }
+    void EndBattle(int result) { battle_.End(result, variables_); }
+    void PlayerAttack() { battle_.PlayerAttack(); }
+    void PlayerUseSkill(const std::string& skill_id) { battle_.PlayerUseSkill(skill_id); }
+    void PlayerUseItem() { battle_.PlayerUseItem(variables_); }
+    void PlayerTryEscape() { battle_.PlayerTryEscape(variables_); }
+    void UpdateBattle(float dt) { battle_.Update(dt, variables_); }
 
     // ---- 状态查询 ----
     bool IsBusy() const { return !active_contexts_.empty(); }
@@ -188,39 +177,25 @@ private:
     bool EvaluateCondition(const EventPage::Condition& cond, EntityID entity);
     bool CheckPageCondition(const EventPage& page, EntityID entity);
 
-    // 动作执行
+    // 动作执行（分域实现于 event_system_actions_*.cpp，D1）
     void ExecuteAction(EventContext& ctx, const Action& action);
+    void ExecDialogActions(EventContext& ctx, const Action& action); // ShowMessage/ShowToast/ShowChoices/ShowUI/HideUI
+    void ExecWorldActions(EventContext& ctx, const Action& action);  // TransferPlayer/MoveEntity/PlayAnimation
+    void ExecAudioActions(const Action& action);                     // PlaySound/PlayBGM/StopBGM/PlayBGS/StopBGS/PlayME
+    void ExecFlowActions(EventContext& ctx, const Action& action);   // Wait/If/Else/EndIf/Loop/BreakLoop/CallScript
 
-    // If/Else/EndIf 辅助
+    // If/Else/EndIf 辅助（event_system_actions_flow.cpp）
     bool EvaluateActionCondition(const Action& action);
     int SkipToEndIf(const std::vector<Action>& actions, int start);
 
+    // 子对象（D1）：变量/库存、战斗、商店
+    GameVariables variables_;
+    BattleSession battle_;
+    ShopSession shop_;
+    ScriptEngine* script_engine_ = nullptr;
+
     World* world_ = nullptr;
     std::vector<EventContext> active_contexts_;
-
-    // 全局状态
-    std::unordered_map<std::string, int> int_variables_;
-    std::unordered_map<std::string, float> float_variables_;
-    std::unordered_map<std::string, bool> bool_variables_;
-    std::unordered_map<std::string, bool> switches_;
-    std::unordered_map<std::string, bool> self_switches_;
-
-    // 商店状态
-    const ShopDatabase* shop_db_ = nullptr;
-    bool shop_pending_ = false;
-    std::string pending_shop_id_;
-
-    // 战斗状态
-    const ActorDatabase* actor_db_ = nullptr;
-    const EnemyDatabase* enemy_db_ = nullptr;
-    const SkillDatabase* skill_db_ = nullptr;
-    ScriptEngine* script_engine_ = nullptr;
-    BattleState battle_state_ = BattleState::None;
-    BattleCombatant battle_player_;
-    std::vector<BattleCombatant> enemies_;
-    int battle_target_ = 0;
-    std::string battle_log_;
-    float battle_timer_ = 0.0f;
 
     // 消息状态
     bool has_pending_message_ = false;

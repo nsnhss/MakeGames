@@ -1086,9 +1086,43 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 - [x] **D0-6 ActionCmd 注册表**：新建 `scene/action_cmd_registry.h`（`kActionCmdRegistry[28]` = cmd + 序列化名（格式冻结）+ 显示名；`ActionCmdToSerializedName`/`GetActionCmdDisplayName`/`ActionCmdFromSerializedName`）；收敛 scene_serializer 序列化/反序列化两处 + event_editor_panel 显示名/菜单数组两处；**顺手修复**（标注）：原 serializer switch 漏 `ShowChoices`/`MoveEntity`/`SetSwitch`（存档丢成 "Unknown"），注册表收敛后自愈
 - [x] **D0-7 常量统一**：`scene/constants.h` 新增 `kPlayerCollisionHalfExtent=14`（event_system 与 game_runtime 共用）/`kEventTouchHalfExtent=16`/`kPickRadius=16`（viewport_panel 点选×2）；`project_schema.h` 新增 `kDefaultMapWidth/Height=20/15`、`kDefaultTileSize=32`、`kDefaultDisplayWidth/Height=1280/720`，收敛 ProjectManifest 默认值 + scene_session/editor_context 默认参数 + editor_project_manager + game_main 回退
 
+### D1 EventSystem 拆分 ✅（848 行 cpp + 256 行头 → 12 文件）
+
+- [x] **GameVariables 类**（`scene/game_variables.h/.cpp`）：int/float/bool 变量 + 开关 + 自开关 cache + `item_*` 库存 + Snapshot/存档 JSON；`on_variable_change` 回调注入（构造时接线 `TriggerOnVariableChange`）。**通知语义逐位保持**：仅 SetInt/AddItem/RemoveItem 触发；`_choice` 走 `SetIntSilent`（原 AcknowledgeChoice 不触发）；RemoveItem 未命中也触发（原行为）；战斗消耗品走 `DecrementItemRaw`（原裸 `--` 不触发不擦除）
+- [x] **BattleSession 子对象**（`scene/battle_session.h/.cpp`，git mv 自 event_system_battle.cpp）：状态机 + 攻击/技能/物品/逃跑/自动结算；数据库单独 setter；变量读写经 `GameVariables&` 注入
+- [x] **ShopSession 子对象**（`scene/shop_session.h/.cpp`，git mv 自 event_system_shop.cpp）：挂起状态 + Buy（扣 gold + 加库存，经 GameVariables）
+- [x] **ExecuteAction 分域 4 文件**：`event_system_actions_ui.cpp`（消息/Toast/选项/HUD）、`_world.cpp`（传送/移动/动画）、`_audio.cpp`（6 音频命令）、`_flow.cpp`（Wait/If/Else/EndIf/Loop/BreakLoop/CallScript + EvaluateActionCondition/SkipToEndIf）；event_system.cpp 剩 487 行（Update/触发/轮询/ExecuteContext/调度器/确认/自开关）
+- [x] **公开 API 零变化**：`BattleState`/`BattleCombatant`/`GlobalStateSnapshot` 均为别名 + 内联转发，调用方（playmode_ui/game_runtime/viewport_panel/测试）逐位不动
+- [x] event_system.h 降为 211 行；删去 shop/actor/enemy/skill database 头依赖（改前置声明经子对象头）
+
+**验证**：8 个新/改 TU + 6 个依赖 TU 单编译零警告；build.ps1 all + test 全绿。
+
+### D2 GameRuntime 拆分 ✅（542 行 cpp → 编排层 ~330 行 + 3 个新模块）
+
+- [x] **`scene/systems/player_movement_system.h/.cpp`**：移动 + AABB 碰撞 + 地图 clamp 归 systems；**高危性能修复（标注）**：碰撞合并矩形从「每帧每层全量重跑 MergeLayerCollisionRects」改为指纹缓存（Tilemap 指针 + tile 尺寸 + Transform + 层 `collision_version`，`TileLayer::SetPassage/Resize/ResizePassagesAndTerrain` 变更自增），每帧仅比对指纹；场景切换三处（StartNewGame/LoadFromSlot/Fade 传送）显式 `InvalidateCollisionCache()`
+- [x] **`scene/systems/camera_follow_system.h/.cpp`**：相机跟随无状态自由函数（viewport 尺寸改参数传入，不再每相机调回调）
+- [x] **`scene/save_system.h/.cpp`**：存档 JSON 组装（格式冻结）/写槽/读槽/最新槽扫描；场景加载与 EventSystem 重建编排留在 GameRuntime
+- [x] **高危 bug 修复（标注）**：原 `RunWorldSystems` 在对话/商店/**战斗**激活时直接 `return`，连 `EventSystem::Update` 一起冻结 → `UpdateBattle` 不 tick，战斗卡 Intro 永不进 PlayerTurn（soft-lock）。修：对话/商店仍冻结（原行为），战斗仅阻塞移动，相机/动画/事件系统继续
+- [x] 测试 `tests/test_player_movement.cpp` 2 用例：缓存重建/合并/显式失效一致性 + AABB 阻挡与地图 clamp
+
+**验证**：build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
+### D3 editor_application 精修 ✅（629 行 cpp → ~470 行 + ViewportRenderTarget 抽离）
+
+- [x] **`src/editor/viewport_render_target.h/.cpp`**：Viewport 离屏渲染目标（Image/Memory/ImageView/RenderPass/Framebuffer + ImGui 纹理 DS）抽为独立类；RenderPass 跨 resize 复用（`Destroy()` 仅毁 RT 资源，`DestroyRenderPass()` 仅 shutdown 调用）；`ctx_.SetViewportSize` 留在调用方（OnInit / BeginFrame resize 两处）；editor CMake 显式加源文件
+- [x] **`game_main.cpp` 主相机缓存（优化项，标注）**：原 `UpdateCameraUBO` 每帧 `GetAllEntities` 全扫找 `Camera::is_primary`；改为 `primary_cam_entity_` 缓存——缓存实体有效且仍为 primary 直接用，失效才重扫；`LoadScene` 场景替换时显式置 0
+
+**验证**：3 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D0：架构修正与重复合并——破 scene↔script 环、debug_log 归 core、imgui backend/theme 归 gameui、tilemap 构建单实现、sprite 管线去重、ActionCmd 注册表、常量统一）
+> **最后更新**：2026-09-07（阶段 D3：editor_application 精修——ViewportRenderTarget 抽离 + game 主相机缓存；105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D2：GameRuntime 拆分——移动/相机/存档归 systems+save_system，碰撞合并指纹缓存，战斗 soft-lock 修复；105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D1：EventSystem 拆分——GameVariables 类 + Battle/ShopSession 子对象 + ExecuteAction 分域 4 文件；公开 API 零变化，build+test 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D0：架构修正与重复合并——破 scene↔script 环、debug_log 归 core、imgui backend/theme 归 gameui、tilemap 构建单实现、sprite 管线去重、ActionCmd 注册表、常量统一）
 >
 > ~~最后更新：2026-09-30~~（阶段 C：文档卫生——历史文档归档 docs/archive/、根 AGENTS.md 建立、一次性文件清理、README 刷新）
 >

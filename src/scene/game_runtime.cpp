@@ -10,7 +10,8 @@
 #include "scene/components/sprite.h"
 #include "scene/components/tilemap.h"
 #include "scene/components/event_trigger.h"
-#include "scene/systems/collision_merge.h"
+#include "scene/systems/camera_follow_system.h"
+#include "scene/save_system.h"
 #include "resource/game_databases.h"
 #include "resource/data_manager.h"
 #include "resource/schema/project_schema.h"
@@ -19,9 +20,7 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cmath>
-#include <ctime>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 
 namespace mg {
@@ -97,6 +96,7 @@ void GameRuntime::StartNewGame() {
     std::string path = GetStartScenePath();
     if (path.empty()) return;
     if (!host_->LoadScene(path)) return;
+    movement_system_.InvalidateCollisionCache();
     current_scene_rel_ = MakeRelPath(path);
     EnsurePlayer();
     play_mode_.SetScreen(PlayModeController::Screen::Game);
@@ -104,15 +104,7 @@ void GameRuntime::StartNewGame() {
 }
 
 void GameRuntime::ContinueGame() {
-    int latest_slot = 0;
-    std::string latest_time;
-    for (int i = 1; i <= 3; ++i) {
-        auto info = play_mode_.ReadSaveSlotInfo(project_root_, i);
-        if (info.exists && info.last_save_time > latest_time) {
-            latest_slot = i;
-            latest_time = info.last_save_time;
-        }
-    }
+    int latest_slot = FindLatestSaveSlot(play_mode_, project_root_);
     if (latest_slot > 0) LoadFromSlot(latest_slot);
     else StartNewGame(); // 无存档时回退到 Start New Game
 }
@@ -140,43 +132,17 @@ std::string GameRuntime::GetStartScenePath() const {
 void GameRuntime::SaveToSlot(int slot) {
     auto* scene = host_->GetActiveScene();
     if (!scene || !scene->GetWorld() || !event_system_) return;
-    auto* world = scene->GetWorld();
-
-    std::vector<EntityID> players;
-    world->Query<Movement>(players);
-    float px = 0.0f, py = 0.0f;
-    if (!players.empty()) {
-        if (auto* pt = world->GetComponent<Transform>(players[0])) {
-            px = pt->position.x;
-            py = pt->position.y;
-        }
-    }
-    nlohmann::json save;
-    save["scene"] = current_scene_rel_;
-    save["player_x"] = px;
-    save["player_y"] = py;
-    save["globals"] = event_system_->SaveState()["globals"];
-    save["bgm"] = AudioManager::Get().GetCurrentBGMPath();
-    std::time_t now = std::time(nullptr);
-    std::tm* tm = std::localtime(&now);
-    char time_buf[64] = {};
-    if (tm) std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%S", tm);
-    save["last_save_time"] = time_buf;
-    fs::create_directories(project_root_ + "/saves");
-    std::string save_path = project_root_ + "/" + PlayModeController::GetSaveFilePath(slot);
-    std::ofstream f(save_path);
-    if (f) f << save.dump(4);
+    auto save = BuildSaveGameJson(scene->GetWorld(), *event_system_, current_scene_rel_);
+    WriteSaveSlot(project_root_, slot, save);
 }
 
 void GameRuntime::LoadFromSlot(int slot) {
-    std::string save_path = project_root_ + "/" + PlayModeController::GetSaveFilePath(slot);
-    if (!fs::exists(save_path)) return;
-    std::ifstream f(save_path);
     nlohmann::json load;
-    if (!(f >> load)) return;
+    if (!ReadSaveSlot(project_root_, slot, load)) return;
     std::string scene_rel = load.value("scene", "");
     if (scene_rel.empty()) return;
     if (!host_->LoadScene(project_root_ + "/" + scene_rel)) return;
+    movement_system_.InvalidateCollisionCache();
     current_scene_rel_ = scene_rel;
 
     auto* scene = host_->GetActiveScene();
@@ -251,166 +217,23 @@ void GameRuntime::RunWorldSystems(float dt) {
     if (!scene || !scene->GetWorld()) return;
     auto* world = scene->GetWorld();
 
-    // 1. MovementSystem + AABB collision
+    // 1. MovementSystem + AABB collision（PlayerMovementSystem，碰撞矩形带指纹缓存）
     {
-        if (event_system_ && (event_system_->IsDialogActive() || event_system_->IsShopActive() || event_system_->IsBattleActive()))
-            return; // 对话框 / 商店 / 战斗阻塞移动
-
-        const uint8_t* keys = SDL_GetKeyboardState(nullptr);
-        std::vector<EntityID> move_entities;
-        world->Query<Transform, Movement>(move_entities);
-
-        // Collect collision rects from all Tilemap layers.
-        // A tile is solid when it blocks all directions (Pass_All).
-        // 实心格子经 MergeLayerCollisionRects 合并为更大矩形，减少碰撞测试次数。
-        std::vector<CollisionRect> collision_rects;
-        std::vector<EntityID> all_entities;
-        world->GetAllEntities(all_entities);
-        for (auto e : all_entities) {
-            auto* tm = world->GetComponent<Tilemap>(e);
-            if (!tm) continue;
-            auto* t = world->GetComponent<Transform>(e);
-            float ox = t ? t->position.x : 0.0f;
-            float oy = t ? t->position.y : 0.0f;
-            float sx = t ? t->scale.x : 1.0f;
-            float sy = t ? t->scale.y : 1.0f;
-            for (auto& layer : tm->layers) {
-                auto merged = MergeLayerCollisionRects(
-                    layer, (float)tm->tile_width, (float)tm->tile_height, ox, oy, sx, sy);
-                collision_rects.insert(collision_rects.end(), merged.begin(), merged.end());
-            }
+        bool dialog_or_shop = event_system_ && (event_system_->IsDialogActive() || event_system_->IsShopActive());
+        bool battle_active = event_system_ && event_system_->IsBattleActive();
+        if (dialog_or_shop)
+            return; // 对话框 / 商店：冻结全部世界系统（原行为）
+        if (!battle_active) {
+            movement_system_.Update(dt, world, SDL_GetKeyboardState(nullptr));
         }
-
-        // Compute map bounds from the first visible Tilemap layer for clamping players.
-        float map_min_x = 0.0f, map_min_y = 0.0f, map_max_x = 0.0f, map_max_y = 0.0f;
-        bool has_map_bounds = false;
-        for (auto e : all_entities) {
-            auto* tm = world->GetComponent<Tilemap>(e);
-            if (!tm || tm->layers.empty()) continue;
-            auto* t = world->GetComponent<Transform>(e);
-            float ox = t ? t->position.x : 0.0f;
-            float oy = t ? t->position.y : 0.0f;
-            float sx = t ? t->scale.x : 1.0f;
-            float sy = t ? t->scale.y : 1.0f;
-            map_min_x = ox;
-            map_min_y = oy;
-            map_max_x = ox + tm->layers[0].width * tm->tile_width * sx;
-            map_max_y = oy + tm->layers[0].height * tm->tile_height * sy;
-            has_map_bounds = true;
-            break;
-        }
-
-        constexpr float HALF = kPlayerCollisionHalfExtent; // 略小于半格 16，避免卡缝
-
-        for (auto entity : move_entities) {
-            auto* t = world->GetComponent<Transform>(entity);
-            auto* m = world->GetComponent<Movement>(entity);
-            if (!t || !m) continue;
-
-            math::Vec2 input(0, 0);
-            if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP])    input.y += 1;
-            if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])  input.y -= 1;
-            if (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT])  input.x -= 1;
-            if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) input.x += 1;
-
-            if (input.x != 0 || input.y != 0) {
-                float len = std::sqrt(input.x * input.x + input.y * input.y);
-                input.x /= len; input.y /= len;
-            }
-
-            float dx = input.x * m->speed * dt;
-            float dy = input.y * m->speed * dt;
-
-            float px0 = t->position.x - HALF, py0 = t->position.y - HALF;
-            float px1 = t->position.x + HALF, py1 = t->position.y + HALF;
-
-            // X axis
-            bool bx = false;
-            float tx0 = px0 + dx, tx1 = px1 + dx;
-            for (auto& r : collision_rects)
-                if (tx0 < r.x1 && tx1 > r.x0 && py0 < r.y1 && py1 > r.y0) { bx = true; break; }
-            if (!bx) t->position.x += dx;
-
-            // Y axis
-            bool by = false;
-            for (auto& r : collision_rects)
-                if (px0 < r.x1 && px1 > r.x0 && py0 + dy < r.y1 && py1 + dy > r.y0) { by = true; break; }
-            if (!by) t->position.y += dy;
-
-            // Clamp player inside the map so it cannot walk off the edge.
-            if (has_map_bounds) {
-                t->position.x = std::clamp(t->position.x, map_min_x + HALF, map_max_x - HALF);
-                t->position.y = std::clamp(t->position.y, map_min_y + HALF, map_max_y - HALF);
-            }
-        }
+        // 战斗期间仅阻塞移动，其余系统继续（修复：原实现此处 return 会连 EventSystem::Update
+        // 一起冻结，UpdateBattle 不 tick → Intro→PlayerTurn 永不推进，战斗 soft-lock）
     }
 
     // 2. CameraFollowSystem: Camera entities follow their target
-    std::vector<EntityID> cameras;
-    world->Query<Camera, Transform>(cameras);
-
-    // Find default follow target (first entity with CameraFollowTarget) for cameras without explicit target.
-    EntityID default_follow = kInvalidEntity;
-    std::vector<EntityID> follow_targets;
-    world->Query<CameraFollowTarget>(follow_targets);
-    if (!follow_targets.empty()) default_follow = follow_targets[0];
-
-    for (auto e : cameras) {
-        auto* cam = world->GetComponent<Camera>(e);
-        auto* cam_t = world->GetComponent<Transform>(e);
-        if (!cam || !cam_t) continue;
-        EntityID target_id = cam->follow_target;
-        if (target_id == kInvalidEntity || target_id == 0) target_id = default_follow;
-        if (target_id == kInvalidEntity || target_id == 0) continue;
-        if (!world->IsValid(target_id)) continue;
-        auto* target_t = world->GetComponent<Transform>(target_id);
-        if (!target_t) continue;
-
-        math::Vec2 target = target_t->position;
-        math::Vec2 curr = cam_t->position;
-        math::Vec2 delta = target - curr;
-
-        if (cam->smooth_follow) {
-            if (std::fabs(delta.x) < cam->dead_zone.x) delta.x = 0;
-            if (std::fabs(delta.y) < cam->dead_zone.y) delta.y = 0;
-            curr.x += delta.x * cam->follow_speed * dt;
-            curr.y += delta.y * cam->follow_speed * dt;
-        } else {
-            curr = target;
-        }
-        cam_t->position = curr;
-
-        // Clamp camera position to tilemap bounds so the viewport never shows
-        // the empty area outside the map.
-        {
-            // 运行时改为查找第一个 Tilemap 实体（editor 原用 TilesetEditor 选中态）
-            Tilemap* tm = nullptr;
-            std::vector<EntityID> all;
-            world->GetAllEntities(all);
-            for (auto te : all) {
-                tm = world->GetComponent<Tilemap>(te);
-                if (tm) break;
-            }
-            if (tm && !tm->layers.empty()) {
-                float map_w = tm->layers[0].width  * tm->tile_width;
-                float map_h = tm->layers[0].height * tm->tile_height;
-                auto [vp_w, vp_h] = viewport_size_fn_ ? viewport_size_fn_() : std::pair<uint32_t, uint32_t>{0, 0};
-                if (vp_w > 0 && vp_h > 0) {
-                    float aspect = (float)vp_w / (float)vp_h;
-                    float half_h = cam->ortho_size;
-                    float half_w = half_h * aspect;
-                    // Clamp camera so the viewport does not show too much outside the map,
-                    // but still allow it to follow the player when the viewport is larger
-                    // than the map (in which case the valid range collapses toward center).
-                    float min_x = std::min(half_w, map_w - half_w);
-                    float max_x = std::max(half_w, map_w - half_w);
-                    float min_y = std::min(half_h, map_h - half_h);
-                    float max_y = std::max(half_h, map_h - half_h);
-                    cam_t->position.x = std::clamp(cam_t->position.x, min_x, max_x);
-                    cam_t->position.y = std::clamp(cam_t->position.y, min_y, max_y);
-                }
-            }
-        }
+    {
+        auto [vp_w, vp_h] = viewport_size_fn_ ? viewport_size_fn_() : std::pair<uint32_t, uint32_t>{0, 0};
+        UpdateCameraFollowSystem(world, dt, vp_w, vp_h);
     }
     // 3. AnimatorSystem
     animator_system_.Update(dt, world);
@@ -439,6 +262,7 @@ void GameRuntime::RunWorldSystems(float dt) {
                 std::string full_path = ResolveTransferTarget(target_scene);
 
                 if (!full_path.empty() && host_->LoadScene(full_path)) {
+                    movement_system_.InvalidateCollisionCache();
                     current_scene_rel_ = MakeRelPath(full_path);
                     auto* new_scene = host_->GetActiveScene();
                     if (new_scene && new_scene->GetWorld()) {

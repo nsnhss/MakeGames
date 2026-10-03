@@ -26,6 +26,7 @@ set(EDITOR_SOURCES
     ${CMAKE_SOURCE_DIR}/src/editor/editor_project_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/editor_app.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/editor_application.cpp
+    ${CMAKE_SOURCE_DIR}/src/editor/viewport_render_target.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/editor_context.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/editor_layer.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/editor_layout.cpp

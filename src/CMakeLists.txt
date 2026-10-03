@@ -30,8 +30,13 @@ add_library(engine_runtime STATIC
     scene/world.cpp
     scene/component.cpp
     scene/event_system.cpp
-    scene/event_system_battle.cpp
-    scene/event_system_shop.cpp
+    scene/event_system_actions_ui.cpp
+    scene/event_system_actions_world.cpp
+    scene/event_system_actions_audio.cpp
+    scene/event_system_actions_flow.cpp
+    scene/game_variables.cpp
+    scene/battle_session.cpp
+    scene/shop_session.cpp
     scene/play_mode_controller.cpp
     scene/game_runtime.cpp
     scene/scene_serializer.cpp
@@ -42,6 +47,9 @@ add_library(engine_runtime STATIC
     scene/systems/sprite_batch_builder.cpp
     scene/systems/tilemap_render_system.cpp
     scene/systems/tilemap_mesh_builder.cpp
+    scene/systems/player_movement_system.cpp
+    scene/systems/camera_follow_system.cpp
+    scene/save_system.cpp
     scene/systems/animator_system.cpp
     scene/systems/tween_animation_system.cpp
     scene/systems/tile_animation.cpp

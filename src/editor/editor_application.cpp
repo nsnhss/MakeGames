@@ -5,8 +5,6 @@
 #include "editor_application.h"
 #include "editor_context.h"
 #include "gameui/mg_imgui_backend.h"
-#include "backends/imgui_impl_vulkan.h"
-#include "renderer/renderer_utils.h"
 #include "renderer/sprite_pipeline_setup.h"
 #include "renderer/texture.h"
 #include "scene/scene.h"
@@ -101,166 +99,6 @@ std::vector<uint32_t> EditorApplication::LoadSpvFile(const char* path)
     return data;
 }
 
-// 创建 / 重建 Viewport 渲染目标（Image + ImageView + RenderPass）。
-// 在 swapchain 创建后及窗口大小变化时调用，为场景渲染提供独立的离屏渲染目标。
-void EditorApplication::CreateViewportRenderTarget()
-{
-    VkDevice device = renderer_.GetDevice();
-    VkPhysicalDevice pd = renderer_.GetPhysicalDevice();
-    if (device == VK_NULL_HANDLE) return;
-
-    viewport_w_ = swapchain_.GetExtent().width;
-    viewport_h_ = swapchain_.GetExtent().height;
-    VkFormat format = swapchain_.GetFormat();
-
-    // 1. Create Image (COLOR_ATTACHMENT | SAMPLED)
-    VkImageCreateInfo image_info = {};
-    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = format;
-    image_info.extent.width = viewport_w_;
-    image_info.extent.height = viewport_h_;
-    image_info.extent.depth = 1;
-    image_info.mipLevels = 1;
-    image_info.arrayLayers = 1;
-    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VkResult err = vkCreateImage(device, &image_info, allocator_, &viewport_image_);
-    renderer::RendererContext::CheckVkResult(err);
-
-    // 2. Allocate & Bind Memory
-    VkMemoryRequirements mem_reqs;
-    vkGetImageMemoryRequirements(device, viewport_image_, &mem_reqs);
-
-    VkMemoryAllocateInfo alloc_info = {};
-    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex = renderer::FindMemoryType(pd, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    err = vkAllocateMemory(device, &alloc_info, allocator_, &viewport_image_memory_);
-    renderer::RendererContext::CheckVkResult(err);
-
-    err = vkBindImageMemory(device, viewport_image_, viewport_image_memory_, 0);
-    renderer::RendererContext::CheckVkResult(err);
-
-    // 3. Create ImageView
-    VkImageViewCreateInfo view_info = {};
-    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_info.image = viewport_image_;
-    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = format;
-    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    view_info.subresourceRange.levelCount = 1;
-    view_info.subresourceRange.layerCount = 1;
-
-    err = vkCreateImageView(device, &view_info, allocator_, &viewport_image_view_);
-    renderer::RendererContext::CheckVkResult(err);
-
-    // 4. Create RenderPass (once, reused across resizes)
-    // 预留：若 swapchain format 变化（极少发生），需重建 render pass 以匹配新格式。
-    if (viewport_rp_ == VK_NULL_HANDLE) {
-        VkAttachmentDescription attachment = {};
-        attachment.format = format;
-        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkAttachmentReference color_ref = {};
-        color_ref.attachment = 0;
-        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-        VkSubpassDescription subpass = {};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &color_ref;
-
-        VkSubpassDependency dependency = {};
-        dependency.srcSubpass = 0;
-        dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        dependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        VkRenderPassCreateInfo rp_info = {};
-        rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_info.attachmentCount = 1;
-        rp_info.pAttachments = &attachment;
-        rp_info.subpassCount = 1;
-        rp_info.pSubpasses = &subpass;
-        rp_info.dependencyCount = 1;
-        rp_info.pDependencies = &dependency;
-
-        err = vkCreateRenderPass(device, &rp_info, allocator_, &viewport_rp_);
-        renderer::RendererContext::CheckVkResult(err);
-    }
-
-    // 5. Create Framebuffer
-    VkFramebufferCreateInfo fb_info = {};
-    fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    fb_info.renderPass = viewport_rp_;
-    fb_info.attachmentCount = 1;
-    fb_info.pAttachments = &viewport_image_view_;
-    fb_info.width = viewport_w_;
-    fb_info.height = viewport_h_;
-    fb_info.layers = 1;
-
-    err = vkCreateFramebuffer(device, &fb_info, allocator_, &viewport_fb_);
-    renderer::RendererContext::CheckVkResult(err);
-
-    // 6. Register with ImGui
-    viewport_imgui_ds_ = ImGui_ImplVulkan_AddTexture(viewport_image_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-    ctx_.SetViewportSize(viewport_w_, viewport_h_);
-}
-
-void EditorApplication::DestroyViewportRenderTarget()
-{
-    VkDevice device = renderer_.GetDevice();
-    if (device == VK_NULL_HANDLE) return;
-
-    if (viewport_imgui_ds_ != VK_NULL_HANDLE) {
-        ImGui_ImplVulkan_RemoveTexture(viewport_imgui_ds_);
-        viewport_imgui_ds_ = VK_NULL_HANDLE;
-    }
-    if (viewport_fb_ != VK_NULL_HANDLE) {
-        vkDestroyFramebuffer(device, viewport_fb_, allocator_);
-        viewport_fb_ = VK_NULL_HANDLE;
-    }
-    if (viewport_image_view_ != VK_NULL_HANDLE) {
-        vkDestroyImageView(device, viewport_image_view_, allocator_);
-        viewport_image_view_ = VK_NULL_HANDLE;
-    }
-    if (viewport_image_ != VK_NULL_HANDLE) {
-        vkDestroyImage(device, viewport_image_, allocator_);
-        viewport_image_ = VK_NULL_HANDLE;
-    }
-    if (viewport_image_memory_ != VK_NULL_HANDLE) {
-        vkFreeMemory(device, viewport_image_memory_, allocator_);
-        viewport_image_memory_ = VK_NULL_HANDLE;
-    }
-
-    viewport_w_ = 0;
-    viewport_h_ = 0;
-}
-
-void EditorApplication::DestroyViewportRenderPass()
-{
-    VkDevice device = renderer_.GetDevice();
-    if (device == VK_NULL_HANDLE) return;
-    if (viewport_rp_ != VK_NULL_HANDLE) {
-        vkDestroyRenderPass(device, viewport_rp_, allocator_);
-        viewport_rp_ = VK_NULL_HANDLE;
-    }
-}
-
 // Callback for SpriteRenderSystem — delegates to ResourceManager
 static VkDescriptorSet SpriteGetTextureDS(void*, const std::string& path) {
     return ResourceManager::Get().GetOrCreateSamplerDS(path);
@@ -342,7 +180,8 @@ void EditorApplication::OnInit()
     }
 
     // ---- Create Viewport render target ----
-    CreateViewportRenderTarget();
+    viewport_rt_.Create(renderer_, swapchain_, allocator_);
+    ctx_.SetViewportSize(viewport_rt_.GetWidth(), viewport_rt_.GetHeight());
 
     // ---- Load sprite shaders ----
     auto vert_spv = LoadSpvFile("assets/shaders/sprite.vert.spv");
@@ -370,18 +209,18 @@ void EditorApplication::OnInit()
     AudioManager::Get().Init();
 
     // ---- Create Sprite Pipeline ----
-    if (sprite_vert_.IsValid() && sprite_frag_.IsValid() && viewport_rp_ != VK_NULL_HANDLE
+    if (sprite_vert_.IsValid() && sprite_frag_.IsValid() && viewport_rt_.GetRenderPass() != VK_NULL_HANDLE
         && sprite_ubo_layout_.IsValid()) {
-        renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rp_, sprite_vert_, sprite_frag_,
+        renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rt_.GetRenderPass(), sprite_vert_, sprite_frag_,
                                        sprite_ubo_layout_, ResourceManager::Get().GetSamplerLayout(),
-                                       (float)viewport_w_, (float)viewport_h_,
+                                       (float)viewport_rt_.GetWidth(), (float)viewport_rt_.GetHeight(),
                                        VK_POLYGON_MODE_FILL, sprite_pipeline_);
 
         // Wireframe 变体：同配置仅多边形模式为线框（需 fillModeNonSolid 特性）
         if (renderer_.IsWireframeSupported()) {
-            renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rp_, sprite_vert_, sprite_frag_,
+            renderer::CreateSpritePipeline(renderer_, allocator_, viewport_rt_.GetRenderPass(), sprite_vert_, sprite_frag_,
                                            sprite_ubo_layout_, ResourceManager::Get().GetSamplerLayout(),
-                                           (float)viewport_w_, (float)viewport_h_,
+                                           (float)viewport_rt_.GetWidth(), (float)viewport_rt_.GetHeight(),
                                            VK_POLYGON_MODE_LINE, sprite_pipeline_wireframe_);
         }
         ctx_.GetViewport().SetWireframeSupported(renderer_.IsWireframeSupported());
@@ -449,8 +288,8 @@ void EditorApplication::OnShutdown()
     sprite_vert_.Destroy();
     sprite_frag_.Destroy();
 
-    DestroyViewportRenderTarget();
-    DestroyViewportRenderPass();
+    viewport_rt_.Destroy();
+    viewport_rt_.DestroyRenderPass();
 
     gameui::MG_VulkanImGui_Shutdown(renderer_, swapchain_);
 
@@ -461,8 +300,9 @@ void EditorApplication::BeginFrame()
 {
     // swapchain 重建 + ImGui NewFrame；resize 后重建 Viewport 离屏渲染目标
     if (gameui::MG_VulkanImGui_BeginFrame(GetWindow(), swapchain_)) {
-        DestroyViewportRenderTarget();
-        CreateViewportRenderTarget();
+        viewport_rt_.Destroy();
+        viewport_rt_.Create(renderer_, swapchain_, allocator_);
+        ctx_.SetViewportSize(viewport_rt_.GetWidth(), viewport_rt_.GetHeight());
     }
 
     {
@@ -490,7 +330,7 @@ void EditorApplication::EndFrame()
         VkCommandBuffer cmd = swapchain_.BeginCommandBuffer();
 
         // --- ① Render Viewport (offscreen) ---
-        if (viewport_fb_ != VK_NULL_HANDLE && sprite_pipeline_.IsValid() && sprite_vb_.IsValid()) {
+        if (viewport_rt_.GetFramebuffer() != VK_NULL_HANDLE && sprite_pipeline_.IsValid() && sprite_vb_.IsValid()) {
             VkClearValue vp_clear = {};
             vp_clear.color.float32[0] = 0.05f;
             vp_clear.color.float32[1] = 0.05f;
@@ -499,10 +339,10 @@ void EditorApplication::EndFrame()
 
             VkRenderPassBeginInfo vp_rp = {};
             vp_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            vp_rp.renderPass = viewport_rp_;
-            vp_rp.framebuffer = viewport_fb_;
-            vp_rp.renderArea.extent.width = viewport_w_;
-            vp_rp.renderArea.extent.height = viewport_h_;
+            vp_rp.renderPass = viewport_rt_.GetRenderPass();
+            vp_rp.framebuffer = viewport_rt_.GetFramebuffer();
+            vp_rp.renderArea.extent.width = viewport_rt_.GetWidth();
+            vp_rp.renderArea.extent.height = viewport_rt_.GetHeight();
             vp_rp.clearValueCount = 1;
             vp_rp.pClearValues = &vp_clear;
 
@@ -511,15 +351,15 @@ void EditorApplication::EndFrame()
             // ECS render systems bind their own pipeline, descriptor sets and vertex buffers below.
             // Only viewport and scissor are set up here as shared dynamic state.
             VkViewport viewport = {};
-            viewport.width = (float)viewport_w_;
-            viewport.height = (float)viewport_h_;
+            viewport.width = (float)viewport_rt_.GetWidth();
+            viewport.height = (float)viewport_rt_.GetHeight();
             viewport.minDepth = 0.0f;
             viewport.maxDepth = 1.0f;
             vkCmdSetViewport(cmd, 0, 1, &viewport);
 
             VkRect2D scissor = {};
-            scissor.extent.width = viewport_w_;
-            scissor.extent.height = viewport_h_;
+            scissor.extent.width = viewport_rt_.GetWidth();
+            scissor.extent.height = viewport_rt_.GetHeight();
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
             // Camera: compute VP matrix from primary Camera Component
@@ -534,7 +374,7 @@ void EditorApplication::EndFrame()
                     auto* cam_trans = world->GetComponent<scene::Transform>(cam_entity);
                     if (cam_comp && cam_trans) {
                         float vp[16];
-                        scene::CameraSystem::ComputeViewProj(vp, viewport_w_, viewport_h_,
+                        scene::CameraSystem::ComputeViewProj(vp, viewport_rt_.GetWidth(), viewport_rt_.GetHeight(),
                             *cam_comp, cam_trans->position);
                         sprite_ubo_.Upload(vp, sizeof(vp));
                     }
@@ -594,7 +434,7 @@ void EditorApplication::EndFrame()
 
             vkCmdEndRenderPass(cmd);
 
-            ctx_.SetViewportTexture((ImTextureID)(intptr_t)viewport_imgui_ds_);
+            ctx_.SetViewportTexture((ImTextureID)(intptr_t)viewport_rt_.GetImGuiDS());
         }
 
         // --- ② Render ImGui (swapchain) ---

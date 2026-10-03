@@ -1,5 +1,6 @@
 #pragma once
 #include "app/application.h"
+#include "editor/viewport_render_target.h"
 #include "renderer/renderer_context.h"
 #include "renderer/swapchain.h"
 #include "renderer/shader.h"
@@ -40,10 +41,8 @@ protected:
 private:
     EditorContext& ctx_;
 
-    // Viewport offscreen render target
-    void CreateViewportRenderTarget();
-    void DestroyViewportRenderTarget();
-    void DestroyViewportRenderPass();
+    // Viewport offscreen render target（D3：实现抽离到 viewport_render_target.h/.cpp）
+    ViewportRenderTarget viewport_rt_;
 
     // 重建 Tilemap VB
     void RebuildTilemapVB();
@@ -59,14 +58,7 @@ private:
     ImVec4 clear_color_ = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
 
     // ---- Viewport offscreen render target ----
-    VkRenderPass viewport_rp_ = VK_NULL_HANDLE;
-    VkImage viewport_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory viewport_image_memory_ = VK_NULL_HANDLE;
-    VkImageView viewport_image_view_ = VK_NULL_HANDLE;
-    VkFramebuffer viewport_fb_ = VK_NULL_HANDLE;
-    VkDescriptorSet viewport_imgui_ds_ = VK_NULL_HANDLE;
-    uint32_t viewport_w_ = 0;
-    uint32_t viewport_h_ = 0;
+    // （成员见 viewport_rt_）
 
     // ---- Sprite 渲染管线 ----
     renderer::Shader sprite_vert_;

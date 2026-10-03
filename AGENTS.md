@@ -41,7 +41,7 @@ $env:PATH = "D:\JetBrains\CLion 2025.2.5\bin\mingw\bin;D:\JetBrains\CLion 2025.2
 - **绝不启动 GUI**：Agent 只编译，不运行 launcher/editor/game；GUI 冒烟由用户手动执行。
   严禁 `Start-Process` 启动 exe（会错乱工作目录导致相对路径 bug，且可能多开）。
 - **零警告**：改动的文件单 TU `-Wall` 必须干净。
-- **PowerShell 写文件**：① 禁用数组拼接重写大文件（曾截断 viewport_panel.cpp）；② 同一文件多处修改必须合并进单次 StrReplaceFile 调用的 edit 数组（并行调用同一文件会 read-modify-write 互相覆盖）；③ 含中文的 .ps1 必须存为 **UTF-8 with BOM**（PS 5.1 无 BOM 按 ANSI 解析会炸）。
+- **PowerShell 写文件**：① 禁用数组拼接重写大文件（曾截断 viewport_panel.cpp）；② 同一文件多处修改必须合并进单次 StrReplaceFile 调用的 edit 数组（并行调用同一文件会 read-modify-write 互相覆盖）；③ 含中文的 .ps1 必须存为 **UTF-8 with BOM**（PS 5.1 无 BOM 按 ANSI 解析会炸）；④ **严禁用 `Get-Content`（无 -Encoding）读写源文件**——PS 5.1 默认按 GBK 解码 UTF-8 无 BOM 文件，写回即全文件中文乱码（曾毁 editor_application.cpp，靠 git checkout 恢复）；必须改行级内容时用 `[System.IO.File]::ReadAllLines/WriteAllLines(path, UTF8)` 显式指定编码，写回用 `UTF8Encoding($false)` 保持无 BOM。
 - **git**：不主动 commit/push/reset/rebase，除非用户明确要求。
 - 中文 UI 字符串直接写 UTF-8 字面量（构建带 `-fexec-charset=UTF-8`）。
 

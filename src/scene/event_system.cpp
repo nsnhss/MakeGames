@@ -1,24 +1,21 @@
 #include "scene/event_system.h"
 #include "scene/constants.h"
-#include "script/script_engine.h"
 #include "scene/components/transform.h"
 #include "scene/components/movement.h"
-#include "scene/components/tilemap.h"
-#include "scene/components/name.h"
-#include "scene/components/animator.h"
-#include "audio/audio_manager.h"
-#include "resource/actor_database.h"
+#include "resource/shop_database.h"
+#include "resource/enemy_database.h"
 #include <SDL.h>
 #include <cassert>
-#include <sstream>
 #include <cmath>
-#include <cstdlib>
 #include <algorithm>
 
 namespace mg {
 namespace scene {
 
-EventSystem::EventSystem(World* world) : world_(world) {}
+EventSystem::EventSystem(World* world) : world_(world) {
+    // GameVariables 的 int 变量变更通知 → 事件触发器（与原 SetVariable 手动调用一致）
+    variables_.SetOnVariableChange([this](const std::string& name) { TriggerOnVariableChange(name); });
+}
 
 void EventSystem::Update(float dt) {
     // 场景切换挂起时冻结所有执行
@@ -52,8 +49,8 @@ void EventSystem::Update(float dt) {
         [](auto& t) { return t.timer <= 0; }), toasts_.end());
 
     // 更新战斗状态机
-    if (battle_state_ != BattleState::None) {
-        UpdateBattle(dt);
+    if (battle_.IsActive()) {
+        battle_.Update(dt, variables_);
     }
 }
 
@@ -310,10 +307,10 @@ void EventSystem::ExecuteContext(EventContext& ctx, float dt) {
     if (ctx.choices_pending) {
         return; // 等待选项选择
     }
-    if (shop_pending_) {
+    if (shop_.IsPending()) {
         return; // 等待商店关闭
     }
-    if (battle_state_ != BattleState::None) {
+    if (battle_.IsActive()) {
         return; // 等待战斗结束
     }
     if (ctx.move_pending) {
@@ -373,7 +370,7 @@ void EventSystem::ExecuteContext(EventContext& ctx, float dt) {
     ExecuteAction(ctx, page.actions[ctx.action_index]);
 
     // 如果不是 wait/message/move/shop/battle，自动推进到下一个动作
-    if (!ctx.waiting && !ctx.message_pending && !ctx.choices_pending && !ctx.move_pending && !ctx.finished && !shop_pending_ && battle_state_ == BattleState::None) {
+    if (!ctx.waiting && !ctx.message_pending && !ctx.choices_pending && !ctx.move_pending && !ctx.finished && !shop_.IsPending() && !battle_.IsActive()) {
         ++ctx.action_index;
         // 非循环页执行完最后一个动作当帧即结束，避免空转一帧
         // （否则 OnUpdate 等每帧轮询触发器会被 HasActiveContextFor 去重挡掉，隔帧才能再触发）
@@ -381,49 +378,45 @@ void EventSystem::ExecuteContext(EventContext& ctx, float dt) {
     }
 }
 
+// ---- 动作执行调度（分域实现见 event_system_actions_*.cpp）----
+
 void EventSystem::ExecuteAction(EventContext& ctx, const Action& action) {
     switch (action.cmd) {
-        case ActionCmd::ShowMessage: {
-            has_pending_message_ = true;
-            dialog_active_ = true;
-            pending_message_ = action.text;
-            pending_message_name_ = action.target; // 说话人名称
-            ctx.message_pending = true;
+        case ActionCmd::ShowMessage:
+        case ActionCmd::ShowToast:
+        case ActionCmd::ShowChoices:
+        case ActionCmd::ShowUI:
+        case ActionCmd::HideUI:
+            ExecDialogActions(ctx, action);
             break;
-        }
-        case ActionCmd::ShowToast: {
-            ToastMessage t;
-            t.text = action.text;
-            t.timer = 2.0f;
-            if (auto* transform = world_->GetComponent<Transform>(ctx.entity)) {
-                t.world_pos = transform->position;
-                t.world_pos.y += 24.0f; // 实体头顶上方
-            }
-            toasts_.push_back(t);
-            break; // 不阻塞事件流
-        }
-        case ActionCmd::ShowChoices: {
-            // 解析选项：text 字段用 "|" 分隔
-            choices_.clear();
-            std::stringstream ss(action.text);
-            std::string part;
-            while (std::getline(ss, part, '|')) {
-                if (!part.empty()) choices_.push_back(part);
-            }
-            ctx.choices_pending = true;
-            ctx.choice_count = (int)choices_.size();
-            ctx.selected_choice = -1;
-            choice_label_ = action.param;
-            choice_active_ = true;
-            dialog_active_ = true; // 阻塞移动
+        case ActionCmd::TransferPlayer:
+        case ActionCmd::MoveEntity:
+        case ActionCmd::PlayAnimation:
+            ExecWorldActions(ctx, action);
             break;
-        }
+        case ActionCmd::PlaySound:
+        case ActionCmd::PlayBGM:
+        case ActionCmd::StopBGM:
+        case ActionCmd::PlayBGS:
+        case ActionCmd::StopBGS:
+        case ActionCmd::PlayME:
+            ExecAudioActions(action);
+            break;
+        case ActionCmd::Wait:
+        case ActionCmd::If:
+        case ActionCmd::Else:
+        case ActionCmd::EndIf:
+        case ActionCmd::Loop:
+        case ActionCmd::BreakLoop:
+        case ActionCmd::CallScript:
+            ExecFlowActions(ctx, action);
+            break;
         case ActionCmd::SetVariable: {
-            SetVariable(action.target, action.int_value);
+            variables_.SetInt(action.target, action.int_value);
             break;
         }
         case ActionCmd::SetSwitch: {
-            SetSwitch(action.target, action.bool_value);
+            variables_.SetSwitch(action.target, action.bool_value);
             break;
         }
         case ActionCmd::SetSelfSwitch: {
@@ -431,239 +424,30 @@ void EventSystem::ExecuteAction(EventContext& ctx, const Action& action) {
             SetSelfSwitch(ctx.entity, sw, action.bool_value);
             break;
         }
-        case ActionCmd::Wait: {
-            ctx.waiting = true;
-            ctx.wait_timer = action.float_value;
-            break;
-        }
-        case ActionCmd::TransferPlayer: {
-            if (!action.target.empty()) {
-                // 跨场景传送：设置切换信号，由 EditorLayer 处理
-                pending_scene_transition_ = action.target;
-                pending_spawn_x_ = action.int_value;
-                pending_spawn_y_ = (int)action.float_value;
-                break;
-            }
-            // 同场景传送：移动 Player entity 到指定 tile 坐标
-            std::vector<EntityID> players;
-            world_->Query<Movement>(players);
-            if (!players.empty()) {
-                auto* t = world_->GetComponent<Transform>(players[0]);
-                if (t) {
-                    // 从 Tilemap 读取 tile_size
-                    float tw = 32.0f, th = 32.0f;
-                    std::vector<EntityID> all;
-                    world_->GetAllEntities(all);
-                    for (auto e : all) {
-                        auto* tm = world_->GetComponent<Tilemap>(e);
-                        if (tm) { tw = (float)tm->tile_width; th = (float)tm->tile_height; break; }
-                    }
-                    t->position.x = (float)action.int_value * tw;
-                    t->position.y = (float)action.float_value * th;
-                }
-            }
-            break;
-        }
-        case ActionCmd::PlayAnimation: {
-            EntityID target = kInvalidEntity;
-            if (!action.text.empty()) {
-                std::vector<EntityID> all;
-                world_->GetAllEntities(all);
-                for (auto e : all) {
-                    auto* name = world_->GetComponent<Name>(e);
-                    if (name && name->value == action.text) { target = e; break; }
-                }
-            }
-            if (target == kInvalidEntity) target = ctx.entity;
-            if (auto* anim = world_->GetComponent<Animator>(target)) {
-                anim->playing = true;
-                anim->current_frame = 0;
-                anim->timer = 0.0f;
-            }
-            break;
-        }
-        case ActionCmd::PlaySound: {
-            AudioManager::Get().PlaySE(action.text);
-            break;
-        }
-        case ActionCmd::PlayBGM: {
-            AudioManager::Get().PlayBGM(action.text, 1.0f, action.float_value);
-            break;
-        }
-        case ActionCmd::StopBGM: {
-            AudioManager::Get().StopBGM(action.float_value);
-            break;
-        }
-        case ActionCmd::PlayBGS: {
-            AudioManager::Get().PlayBGS(action.text, 1.0f, action.float_value);
-            break;
-        }
-        case ActionCmd::StopBGS: {
-            AudioManager::Get().StopBGS(action.float_value);
-            break;
-        }
-        case ActionCmd::PlayME: {
-            AudioManager::Get().PlayME(action.text);
-            break;
-        }
-        case ActionCmd::MoveEntity: {
-            // 查找目标实体
-            EntityID target = kInvalidEntity;
-            if (action.target == "@self") {
-                target = ctx.entity;
-            } else {
-                std::vector<EntityID> all;
-                world_->GetAllEntities(all);
-                for (auto e : all) {
-                    auto* name = world_->GetComponent<Name>(e);
-                    if (name && name->value == action.target) { target = e; break; }
-                }
-            }
-            if (target == kInvalidEntity) {
-                ToastMessage toast;
-                toast.text = "MoveEntity: target not found";
-                toast.timer = 2.0f;
-                if (auto* transform = world_->GetComponent<Transform>(ctx.entity)) {
-                    toast.world_pos = transform->position;
-                    toast.world_pos.y += 24.0f;
-                }
-                toasts_.push_back(toast);
-                break;
-            }
-
-            // 解析路径 "x1,y1;x2,y2;..."
-            std::vector<math::Vec2> path;
-            {
-                const std::string& s = action.param;
-                size_t start = 0;
-                while (start < s.size()) {
-                    size_t sep = s.find(';', start);
-                    std::string pair = (sep == std::string::npos) ? s.substr(start) : s.substr(start, sep - start);
-                    size_t comma = pair.find(',');
-                    if (comma != std::string::npos) {
-                        try {
-                            float px = std::stof(pair.substr(0, comma));
-                            float py = std::stof(pair.substr(comma + 1));
-                            path.emplace_back(px, py);
-                        } catch (...) {}
-                    }
-                    if (sep == std::string::npos) break;
-                    start = sep + 1;
-                }
-            }
-            if (path.empty()) {
-                ToastMessage toast;
-                toast.text = "MoveEntity: empty path";
-                toast.timer = 2.0f;
-                if (auto* transform = world_->GetComponent<Transform>(ctx.entity)) {
-                    toast.world_pos = transform->position;
-                    toast.world_pos.y += 24.0f;
-                }
-                toasts_.push_back(toast);
-                break;
-            }
-
-            ctx.move_target = target;
-            ctx.move_path = std::move(path);
-            ctx.move_speed = action.int_value > 0 ? (float)action.int_value : 60.0f;
-            ctx.move_index = 0;
-            ctx.move_pending = true;
-            break;
-        }
         case ActionCmd::AddItem: {
-            std::string key = "item_" + action.target;
-            int count = action.int_value > 0 ? action.int_value : 1;
-            int_variables_[key] += count;
-            TriggerOnVariableChange(key);
+            variables_.AddItem(action.target, action.int_value);
             break;
         }
         case ActionCmd::RemoveItem: {
-            std::string key = "item_" + action.target;
-            int count = action.int_value > 0 ? action.int_value : 1;
-            auto it = int_variables_.find(key);
-            if (it != int_variables_.end()) {
-                it->second = std::max(0, it->second - count);
-                if (it->second == 0) int_variables_.erase(it);
-            }
-            TriggerOnVariableChange(key);
+            variables_.RemoveItem(action.target, action.int_value);
             break;
         }
         case ActionCmd::ShopProcessing: {
-            if (shop_db_ && shop_db_->Find(action.target)) {
-                shop_pending_ = true;
-                pending_shop_id_ = action.target;
-            }
+            if (shop_.Database() && shop_.Database()->Find(action.target))
+                shop_.Open(action.target);
             break;
         }
         case ActionCmd::BattleProcessing: {
-            if (enemy_db_ && enemy_db_->Find(action.target)) {
+            if (battle_.GetEnemyDatabase() && battle_.GetEnemyDatabase()->Find(action.target))
                 StartBattle(action.target, action.int_value > 0 ? action.int_value : 1, action.param);
-            }
-            break;
-        }
-        case ActionCmd::ShowUI: {
-            HUDOverlay hud;
-            hud.name = action.target;
-            hud.text = action.text;
-            hud.visible = true;
-            hud_overlays_[hud.name] = hud;
-            break;
-        }
-        case ActionCmd::HideUI: {
-            auto it = hud_overlays_.find(action.target);
-            if (it != hud_overlays_.end()) it->second.visible = false;
-            break;
-        }
-        case ActionCmd::If: {
-            bool result = EvaluateActionCondition(action);
-            if (!result) {
-                int target_idx = SkipToEndIf(
-                    world_->GetComponent<EventTrigger>(ctx.entity)->pages[ctx.page_index].actions,
-                    (int)ctx.action_index);
-                ctx.action_index = (size_t)target_idx; // 跳到 Else/EndIf，下帧自动++
-            }
-            break;
-        }
-        case ActionCmd::Else: {
-            // If-true 之后遇到 Else，跳过到 EndIf
-            int target_idx = SkipToEndIf(
-                world_->GetComponent<EventTrigger>(ctx.entity)->pages[ctx.page_index].actions,
-                (int)ctx.action_index);
-            ctx.action_index = (size_t)target_idx;
-            break;
-        }
-        case ActionCmd::EndIf: {
-            // 什么都不做，正常推进
-            break;
-        }
-        case ActionCmd::Loop: {
-            ctx.loop_active = true;
-            ctx.loop_start = ctx.action_index;
-            ctx.loop_count = action.int_value;
-            ctx.loop_current = 0;
-            break;
-        }
-        case ActionCmd::BreakLoop: {
-            if (ctx.loop_active) {
-                ctx.loop_active = false;
-                auto* trigger = world_->GetComponent<EventTrigger>(ctx.entity);
-                if (trigger && ctx.page_index < trigger->pages.size()) {
-                    ctx.action_index = trigger->pages[ctx.page_index].actions.size();
-                }
-            }
-            break;
-        }
-        case ActionCmd::CallScript: {
-            if (script_engine_) {
-                script_engine_->SetContext(world_, this);
-                script_engine_->DoFile(action.text);
-            }
             break;
         }
         default:
             break;
     }
 }
+
+// ---- 消息 / 选项确认 ----
 
 void EventSystem::AcknowledgeMessage() {
     has_pending_message_ = false;
@@ -692,91 +476,17 @@ void EventSystem::AcknowledgeChoice(int index) {
         if (ctx.choices_pending) {
             ctx.choices_pending = false;
             ctx.selected_choice = index;
-            int_variables_["_choice"] = index;
+            variables_.SetIntSilent("_choice", index); // 不触发 OnVariableChange（与原行为一致）
             ++ctx.action_index;
             break;
         }
     }
 }
 
-bool EventSystem::EvaluateActionCondition(const Action& action) {
-    if (action.param == "choice") {
-        return GetVariableInt("_choice", -1) == (int)action.float_value;
-    }
-    if (action.param == "switch") {
-        return GetSwitch(action.target) == action.bool_value;
-    }
-    if (action.param == "variable") {
-        int val = GetVariableInt(action.target, 0);
-        int cmp = (int)action.float_value;
-        switch (action.int_value) {
-            case 0: return val == cmp;
-            case 1: return val != cmp;
-            case 2: return val > cmp;
-            case 3: return val < cmp;
-            case 4: return val >= cmp;
-            case 5: return val <= cmp;
-        }
-        return false;
-    }
-    return false;
-}
-
-int EventSystem::SkipToEndIf(const std::vector<Action>& actions, int start) {
-    int depth = 1;
-    for (int i = start + 1; i < (int)actions.size(); ++i) {
-        if (actions[i].cmd == ActionCmd::If) depth++;
-        else if (actions[i].cmd == ActionCmd::EndIf) {
-            depth--;
-            if (depth == 0) return i;
-        }
-        else if (actions[i].cmd == ActionCmd::Else && depth == 1) return i;
-    }
-    return (int)actions.size();
-}
-
-// ---- 全局状态 ----
-
-void EventSystem::SetVariable(const std::string& name, int value) {
-    int_variables_[name] = value;
-    TriggerOnVariableChange(name);
-}
-
-void EventSystem::SetVariable(const std::string& name, float value) {
-    float_variables_[name] = value;
-}
-
-void EventSystem::SetVariable(const std::string& name, bool value) {
-    bool_variables_[name] = value;
-}
-
-int EventSystem::GetVariableInt(const std::string& name, int default_val) const {
-    auto it = int_variables_.find(name);
-    return (it != int_variables_.end()) ? it->second : default_val;
-}
-
-float EventSystem::GetVariableFloat(const std::string& name, float default_val) const {
-    auto it = float_variables_.find(name);
-    return (it != float_variables_.end()) ? it->second : default_val;
-}
-
-bool EventSystem::GetVariableBool(const std::string& name, bool default_val) const {
-    auto it = bool_variables_.find(name);
-    return (it != bool_variables_.end()) ? it->second : default_val;
-}
-
-void EventSystem::SetSwitch(const std::string& name, bool value) {
-    switches_[name] = value;
-}
-
-bool EventSystem::GetSwitch(const std::string& name, bool default_val) const {
-    auto it = switches_.find(name);
-    return (it != switches_.end()) ? it->second : default_val;
-}
+// ---- 自开关（cache + 组件同步）----
 
 void EventSystem::SetSelfSwitch(EntityID entity, char sw, bool value) {
-    std::string key = std::to_string(entity) + "_" + sw;
-    self_switches_[key] = value;
+    variables_.SetSelfSwitch(entity, sw, value);
 
     // 同步到组件
     auto* trigger = world_->GetComponent<EventTrigger>(entity);
@@ -786,62 +496,11 @@ void EventSystem::SetSelfSwitch(EntityID entity, char sw, bool value) {
 }
 
 bool EventSystem::GetSelfSwitch(EntityID entity, char sw, bool default_val) const {
-    std::string key = std::to_string(entity) + "_" + sw;
-    auto it = self_switches_.find(key);
-    if (it != self_switches_.end()) return it->second;
+    if (const bool* v = variables_.FindSelfSwitch(entity, sw)) return *v;
     // fallback: 读取组件中的值（场景切换后新 EventSystem cache 为空）
     auto* trigger = world_->GetComponent<EventTrigger>(entity);
     if (trigger) return trigger->GetSelfSwitch(sw);
     return default_val;
-}
-
-std::vector<std::pair<std::string, int>> EventSystem::GetInventoryItems() const {
-    std::vector<std::pair<std::string, int>> items;
-    for (const auto& [key, value] : int_variables_) {
-        if (key.rfind("item_", 0) == 0 && value > 0) {
-            items.emplace_back(key.substr(5), value);
-        }
-    }
-    return items;
-}
-
-EventSystem::GlobalStateSnapshot EventSystem::TakeGlobalStateSnapshot() const {
-    GlobalStateSnapshot snap;
-    snap.int_vars       = int_variables_;
-    snap.float_vars     = float_variables_;
-    snap.bool_vars      = bool_variables_;
-    snap.switches       = switches_;
-    snap.self_switches  = self_switches_;
-    return snap;
-}
-
-void EventSystem::RestoreGlobalState(const GlobalStateSnapshot& snap) {
-    int_variables_   = snap.int_vars;
-    float_variables_ = snap.float_vars;
-    bool_variables_  = snap.bool_vars;
-    switches_        = snap.switches;
-    self_switches_   = snap.self_switches;
-}
-
-nlohmann::json EventSystem::SaveState() const {
-    nlohmann::json j;
-    auto& g = j["globals"];
-    g["int_vars"]       = int_variables_;
-    g["float_vars"]     = float_variables_;
-    g["bool_vars"]      = bool_variables_;
-    g["switches"]       = switches_;
-    g["self_switches"]  = self_switches_;
-    return j;
-}
-
-void EventSystem::LoadState(const nlohmann::json& j) {
-    if (!j.contains("globals")) return;
-    const auto& g = j["globals"];
-    if (g.contains("int_vars"))       int_variables_    = g["int_vars"].get<std::unordered_map<std::string, int>>();
-    if (g.contains("float_vars"))     float_variables_  = g["float_vars"].get<std::unordered_map<std::string, float>>();
-    if (g.contains("bool_vars"))      bool_variables_   = g["bool_vars"].get<std::unordered_map<std::string, bool>>();
-    if (g.contains("switches"))       switches_         = g["switches"].get<std::unordered_map<std::string, bool>>();
-    if (g.contains("self_switches"))  self_switches_    = g["self_switches"].get<std::unordered_map<std::string, bool>>();
 }
 
 } // namespace scene

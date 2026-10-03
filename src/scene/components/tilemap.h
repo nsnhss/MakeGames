@@ -34,6 +34,8 @@ struct TileLayer {
     std::vector<uint8_t> terrain;  // per-tile terrain tag (0 = none)
     bool visible = true;
     float edge_thickness = 1.0f;  // map border collision thickness (pixels), 0=open boundary
+    // 碰撞数据版本号：passages 任何变更 +1（PlayerMovementSystem 碰撞缓存指纹用）
+    uint32_t collision_version = 0;
 
     TileLayer() = default;
     TileLayer(const std::string& n, int w, int h)
@@ -55,6 +57,7 @@ struct TileLayer {
         const size_t n = tiles.size();
         passages.assign(n, Pass_None);
         terrain.assign(n, 0);
+        ++collision_version;
     }
 
     uint8_t GetPassage(int x, int y) const {
@@ -64,6 +67,7 @@ struct TileLayer {
     void SetPassage(int x, int y, uint8_t flags) {
         if (x < 0 || x >= width || y < 0 || y >= height) return;
         passages[y * width + x] = flags;
+        ++collision_version;
     }
 
     uint8_t GetTerrain(int x, int y) const {
@@ -112,6 +116,7 @@ struct TileLayer {
         tiles = std::move(new_tiles);
         passages = std::move(new_passages);
         terrain = std::move(new_terrain);
+        ++collision_version;
     }
 };
 
