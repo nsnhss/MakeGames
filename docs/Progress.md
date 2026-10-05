@@ -1121,9 +1121,20 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 **验证**：7 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
 
+### D5 LauncherWindow 拆分 ✅（1326 行 → 7 文件，纯移动逐位不变）
+
+- [x] **`launcher_ui_kit.h/.cpp`**：共享 ImGui 控件助手提升为 `mg::launcher` 导出（Fh/Fs/Em/Accent/DrawCardShadow/PageHeader/ThumbPlaceholderColor/NavItem/BtnPrimary/BtnSecondary）
+- [x] **`launcher_path_utils.h/.cpp`**：路径/平台助手（默认项目根目录读写/文件夹浏览对话框/项目名净化/唯一路径/EllipsisPath）
+- [x] **页面 4 文件**：`launcher_home_page.cpp`（主页 ~250 行）/ `launcher_projects_page.cpp`（项目列表）/ `launcher_misc_pages.cpp`（日志+设置）/ `launcher_dialogs.cpp`（新建向导+重新定位）；`launcher_window.cpp` 瘦身为 ~170 行框架（OpenProject/Init/Shutdown/Draw/TopBar/Nav/Content）
+- [x] 顺手清理原文件 4 个未使用局部变量（text_col×2/child_bg/text_dis）；clicked_doc 的 ShellExecuteW 块补 `#ifdef _WIN32` 保护（Windows-only 项目行为不变）
+
+**验证**：7 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D4：ViewportPanel 拆 4 文件 + Details 面板 Undo 化；105 tests / 589 checks 全绿）
+> **最后更新**：2026-09-07（阶段 D5：LauncherWindow 拆 7 文件——ui_kit/path_utils 共享助手 + 页面 4 文件；105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D4：ViewportPanel 拆 4 文件 + Details 面板 Undo 化；105 tests / 589 checks 全绿）
 >
 > ~~最后更新：2026-09-07~~（阶段 D3：editor_application 精修——ViewportRenderTarget 抽离 + game 主相机缓存；105 tests / 589 checks 全绿）
 >

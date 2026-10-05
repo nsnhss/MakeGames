@@ -8,6 +8,12 @@ set(LAUNCHER_SOURCES
     pending_editor.cpp
     core/project_manager.cpp
     ui/launcher_window.cpp
+    ui/launcher_ui_kit.cpp
+    ui/launcher_path_utils.cpp
+    ui/launcher_home_page.cpp
+    ui/launcher_projects_page.cpp
+    ui/launcher_misc_pages.cpp
+    ui/launcher_dialogs.cpp
     ui/log_panel.cpp
 )
 
