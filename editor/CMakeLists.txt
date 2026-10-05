@@ -13,6 +13,9 @@ set(EDITOR_PANEL_SOURCES
     ${CMAKE_SOURCE_DIR}/src/editor/panels/tile_palette_panel.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/panels/tile_autotile.cpp
     ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_panel.cpp
+    ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_context_menu.cpp
+    ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_gizmo.cpp
+    ${CMAKE_SOURCE_DIR}/src/editor/panels/viewport_tile_editing.cpp
 )
 
 set(EDITOR_SOURCES

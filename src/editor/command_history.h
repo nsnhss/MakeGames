@@ -55,6 +55,9 @@ class UpdateEntityCommand : public ICommand {
 public:
     // after = 目标状态快照（调用方先算好，如 prefab 文件内容+保留位置）
     UpdateEntityCommand(scene::World* world, scene::EntityID entity, nlohmann::json after);
+    // before/after 均为调用方提供的快照（Details 面板组件编辑：before 在编辑前捕获）
+    UpdateEntityCommand(scene::World* world, scene::EntityID entity,
+                        nlohmann::json before, nlohmann::json after);
     void Execute() override;
     void Undo() override;
     const char* GetName() const override { return "Update Entity"; }

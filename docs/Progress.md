@@ -1114,9 +1114,18 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 **验证**：3 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
 
+### D4 ViewportPanel 拆分 + Details 面板 Undo 化 ✅
+
+- [x] **ViewportPanel 拆分**（718 行 cpp → 4 文件，纯移动逐位不变）：`viewport_panel.cpp` ~330 行（坐标换算助手提取为头文件声明 + 主流程 Draw/相机导航/点选/浮动工具栏/Play Mode 胶合）+ `viewport_context_menu.cpp`（右键点选+菜单+Delete 键）+ `viewport_gizmo.cpp`（SetTransformCommand/网格/选中高亮+Translate Gizmo/实体放置）+ `viewport_tile_editing.cpp`（3 个 Paint 命令/Tile+Passage+Terrain 绘制/帧末 Undo flush）；新增 `ViewportFrameCtx` 帧内共享状态结构传参
+- [x] **Details 面板 Undo 化（高危数据安全修复，标注）**：原属性编辑/Add/Remove Component 零 Undo。现：① 属性编辑——无挂起编辑时捕获帧前快照，连续帧变化合并为一段，首个无变化帧结算为单条 `UpdateEntityCommand`（新增 before+after 双快照构造）；② Add/Remove Component——立即型 before/after 快照各包一条命令；③ 结算仅在挂起编辑仍属当前活动场景时入栈（`edit_world_ == session_.GetWorld()` 防场景切换悬垂指针），实体删除/选区离开自动丢弃（删除由 DeleteEntityCommand 自身快照覆盖）
+
+**验证**：7 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D3：editor_application 精修——ViewportRenderTarget 抽离 + game 主相机缓存；105 tests / 589 checks 全绿）
+> **最后更新**：2026-09-07（阶段 D4：ViewportPanel 拆 4 文件 + Details 面板 Undo 化；105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D3：editor_application 精修——ViewportRenderTarget 抽离 + game 主相机缓存；105 tests / 589 checks 全绿）
 >
 > ~~最后更新：2026-09-07~~（阶段 D2：GameRuntime 拆分——移动/相机/存档归 systems+save_system，碰撞合并指纹缓存，战斗 soft-lock 修复；105 tests / 589 checks 全绿）
 >

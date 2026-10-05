@@ -73,6 +73,9 @@ public:
     void EnsurePlayer();
     void FixupActiveTilemapTileset();
 
+    // 命令历史（Details 面板组件编辑/增删走 Undo 栈）；未 Bind 时为 nullptr
+    CommandHistory* GetCommandHistory() const { return history_; }
+
 private:
     std::unique_ptr<scene::Scene> active_scene_;
     std::string scene_file_path_;

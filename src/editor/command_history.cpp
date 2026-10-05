@@ -84,6 +84,11 @@ UpdateEntityCommand::UpdateEntityCommand(scene::World* world, scene::EntityID en
     }
 }
 
+UpdateEntityCommand::UpdateEntityCommand(scene::World* world, scene::EntityID entity,
+                                         nlohmann::json before, nlohmann::json after)
+    : world_(world), entity_(entity),
+      before_(std::move(before)), after_(std::move(after)) {}
+
 void UpdateEntityCommand::Execute() {
     if (world_ && world_->IsValid(entity_)) {
         world_->RestoreEntityInto(entity_, after_);
