@@ -1142,9 +1142,20 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 **验证**：6 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
 
+### D7 收尾 ✅（D0–D6 全阶段完成）
+
+- [x] **`editor_context.h` 标注为稳定门面**：新增功能在子系统（SceneSession/SelectionManager/CommandHistory 等）扩展，门面仅加内联转发，保持面板侧 API 向后兼容
+- [x] **scene_serializer 组件注册表化：跳过**（可选项——D0-6 后序列化重复已可接受，保持现状避免无谓 churn）
+- [x] **`AGENTS.md` 全量更新**：结构速览反映 D1–D6 拆分现状（EventSystem 子对象/GameRuntime systems/Viewport 4 文件/Launcher 7 文件/稳定门面约定）、单 TU 数组传参坑、拆分纪律与行数例外清单
+- [x] **单文件行数复检**：剩余 >400 行 cpp 为 event_editor_panel(644)/playmode_ui(589)/game_main(581)/scene_session(493)/event_system(487)/swapchain(487) 等——其中 swapchain 与 playmode_ui 为计划明确不拆项，其余为功能内聚可接受，本轮不强行拆
+
+**验证**：注释/文档级改动 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D6：好用度优化包 7 项——Play Mode 错误 toast/数据库删除确认/Console 命令/Status 实值/字体回退/tooltip/告警节流；105 tests / 589 checks 全绿）
+> **最后更新**：2026-09-07（阶段 D7：收尾——editor_context 稳定门面标注 + AGENTS.md 全量更新 + 行数复检；D0–D7 全部完成，105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D6：好用度优化包 7 项——Play Mode 错误 toast/数据库删除确认/Console 命令/Status 实值/字体回退/tooltip/告警节流；105 tests / 589 checks 全绿）
 >
 > ~~最后更新：2026-09-07~~（阶段 D5：LauncherWindow 拆 7 文件——ui_kit/path_utils 共享助手 + 页面 4 文件；105 tests / 589 checks 全绿）
 >

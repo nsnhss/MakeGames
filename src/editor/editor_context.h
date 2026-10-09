@@ -31,8 +31,11 @@ public:
     virtual ~IAssetManager() = default;
 };
 
-// 全局编辑器上下文
-// 所有面板通过此单例共享状态，实现选择同步、播放模式切换等
+// 全局编辑器上下文（稳定门面，阶段 D7 标注）
+// 所有面板通过此单例共享状态，实现选择同步、播放模式切换等。
+// 本头文件是各面板的稳定门面 API：新增编辑器功能优先在子系统
+// （SceneSession/SelectionManager/CommandHistory/...）上扩展，
+// 此处仅加内联转发，保持门面签名向后兼容，不再引入新的直接字段。
 class EditorContext {
 public:
     // ---- 选区系统（委托 SelectionManager）----

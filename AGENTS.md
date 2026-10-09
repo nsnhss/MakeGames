@@ -36,11 +36,16 @@ $env:PATH = "D:\JetBrains\CLion 2025.2.5\bin\mingw\bin;D:\JetBrains\CLion 2025.2
   -c <file> -o NUL   # stderr 有输出即警告/错误；警告必须清零
 ```
 
+- **必须数组形式 `@inc` 传参**（`$inc = @('-D...','-I...'); & g++ @inc -c ...`）：字符串拼接会被 PS splatting 拆错 SDL2 路径（报 "linker input file not found"）。
+- build.ps1 偶现 exit code 1 假象：CMake/freetype 警告走 stderr 触发 PS NativeCommandError，看输出尾部"构建成功"为准。
+
 ## 纪律
 
 - **绝不启动 GUI**：Agent 只编译，不运行 launcher/editor/game；GUI 冒烟由用户手动执行。
   严禁 `Start-Process` 启动 exe（会错乱工作目录导致相对路径 bug，且可能多开）。
 - **零警告**：改动的文件单 TU `-Wall` 必须干净。
+- **拆分≠改行为**：纯移动逐位不变；优化/修复项在提交信息与 Progress.md 独立标注。
+- **文件行数**：单文件目标 <400 行（UI 面板 <350），头文件 <250；例外（不强行拆）：`renderer/swapchain.cpp`、`gameui/playmode_ui.cpp`。
 - **PowerShell 写文件**：① 禁用数组拼接重写大文件（曾截断 viewport_panel.cpp）；② 同一文件多处修改必须合并进单次 StrReplaceFile 调用的 edit 数组（并行调用同一文件会 read-modify-write 互相覆盖）；③ 含中文的 .ps1 必须存为 **UTF-8 with BOM**（PS 5.1 无 BOM 按 ANSI 解析会炸）；④ **严禁用 `Get-Content`（无 -Encoding）读写源文件**——PS 5.1 默认按 GBK 解码 UTF-8 无 BOM 文件，写回即全文件中文乱码（曾毁 editor_application.cpp，靠 git checkout 恢复）；必须改行级内容时用 `[System.IO.File]::ReadAllLines/WriteAllLines(path, UTF8)` 显式指定编码，写回用 `UTF8Encoding($false)` 保持无 BOM。
 - **git**：不主动 commit/push/reset/rebase，除非用户明确要求。
 - 中文 UI 字符串直接写 UTF-8 字面量（构建带 `-fexec-charset=UTF-8`）。
@@ -48,8 +53,11 @@ $env:PATH = "D:\JetBrains\CLion 2025.2.5\bin\mingw\bin;D:\JetBrains\CLion 2025.2
 ## 结构速览
 
 - `src/`：`engine_runtime`（零 ImGui：core/renderer/scene/resource/audio/script/gameui 之外的运行时）+ `engine_editor`（编辑器 ImGui 封装）+ `engine_gameui`（ImGui 本体 + Vulkan/SDL2 后端 + Play Mode 覆盖层 UI `gameui/playmode_ui.*`，editor/game 共用）+ `game_main.cpp`
-- `editor/`、`launcher/`：各自 exe；`tests/`：engine_tests（自包含最小框架，宏见 `test_framework.h`）
-- Play Mode 编排 `scene/game_runtime.*`（editor 与 game 共用）；存档格式见 `game_runtime.cpp` SaveToSlot
+- `editor/`、`launcher/`：各自 exe；`tests/`：engine_tests（自包含最小框架，`MG_TEST_MAIN` 全工程唯一，在 `test_databases.cpp`）
+- **EventSystem**（D1 拆分）：`scene/event_system.*` 编排 + `game_variables.*` / `battle_session.*` / `shop_session.*` 子对象 + `event_system_actions_{dialog,world,audio,flow}.cpp` 分域；公开 API 为内联转发
+- **Play Mode 编排**（D2 拆分）：`scene/game_runtime.*` 编排 + `scene/systems/player_movement_system.*`（碰撞指纹缓存）+ `camera_follow_system.*` + `scene/save_system.*`；存档格式冻结，见 `save_system.cpp`
+- **编辑器**：`editor/editor_context.h` 是各面板的**稳定门面**（只加内联转发，功能在子系统扩展）；`viewport_panel` 拆 4 文件（gizmo/context_menu/tile_editing）；`viewport_render_target.*` 独立 RT 类；Details 面板属性编辑/组件增删均走 Undo
+- **Launcher**（D5 拆分）：`launcher_window.cpp` 框架 + `ui/launcher_ui_kit.*` 共享控件 + `launcher_path_utils.*` + 页面 4 文件（home/projects/misc/dialogs）
 - `docs/`：`Progress.md`（事实源）、`GameDataModel.md`、`TilemapDesign.md`、`archive/`（历史快照，不再维护）
 
 ## 日志
