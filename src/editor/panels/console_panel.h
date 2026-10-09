@@ -19,6 +19,8 @@ public:
 
 private:
     void SyncFromEngineLog();
+    // D6-3：最小命令集（help/clear/stat）
+    void ExecuteCommand(const std::string& cmd);
 
     char command_buffer_[256] = {};
     char search_buffer_[128] = {};

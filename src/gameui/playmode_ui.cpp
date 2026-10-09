@@ -3,6 +3,8 @@
 #include "scene/event_system.h"
 #include "scene/play_mode_controller.h"
 #include "resource/game_databases.h"
+#include "resource/actor_database.h"
+#include "core/log.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -35,6 +37,41 @@ void DrawHealthBar(ImDrawList* dl, ImVec2 tl, ImVec2 br, int cur, int max, ImU32
     ImVec2 ts = ImGui::CalcTextSize(label.c_str());
     dl->AddText(ImVec2(tl.x + (br.x - tl.x - ts.x) * 0.5f, tl.y + 1),
                 IM_COL32(255, 255, 255, 255), label.c_str());
+}
+
+// ---- D6-1：屏幕空间 Toast（Log Warn/Error 的 Play Mode 可见通道）----
+// 纹理/音频/脚本加载失败等 MG_LOG_WARN/ERROR 原先只进编辑器 Console，
+// Play Mode 玩家零感知。这里挂一个全局 Log sink，把 Warn/Error 转为
+// 屏幕顶部渐隐 toast；相同文本连续出现合并计数，上限 6 条防刷屏。
+struct ScreenToast {
+    std::string text;
+    bool is_error = false;
+    float age = 0.0f;
+    int count = 1;
+};
+constexpr float kScreenToastLife = 4.0f;
+
+std::vector<ScreenToast>& ScreenToasts() {
+    static std::vector<ScreenToast> v;
+    return v;
+}
+
+void EnsureScreenToastSink() {
+    static bool registered = false;
+    if (registered) return;
+    registered = true;
+    core::Log::AddSink([](const core::LogMessage& m) {
+        if (m.level != core::LogLevel::Warn && m.level != core::LogLevel::Error) return;
+        auto& v = ScreenToasts();
+        const bool is_err = (m.level == core::LogLevel::Error);
+        if (!v.empty() && v.back().text == m.text && v.back().is_error == is_err) {
+            v.back().count += 1;
+            v.back().age = 0.0f;
+            return;
+        }
+        v.push_back({m.text, is_err, 0.0f, 1});
+        if (v.size() > 6) v.erase(v.begin());
+    });
 }
 
 } // namespace
@@ -159,16 +196,39 @@ void DrawPauseMenu(const PlayUIContext& ui, PauseSub& sub) {
         }
         ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + box_h - 38.0f));
         if (ImGui::Button("Back", ImVec2(bw, 28.0f))) sub = PauseSub::None;
-    } else { // Status（占位：HP/MP/Gold）
+    } else { // Status（D6-4：角色实时数值，EvalActorBattleStats 与战斗同公式）
         ImGui::SetCursorScreenPos(ImVec2(bx, by));
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Status");
         by += 28.0f;
-        int hp = ui.es ? ui.es->GetVariableInt("hp") : 0;
-        int mp = ui.es ? ui.es->GetVariableInt("mp") : 0;
+
+        // 主角约定与战斗一致：缺省 actor id = "Player"，找不到则退到数据库首个角色
+        const ActorDatabase::ActorDef* def = nullptr;
+        if (ui.dbs) {
+            def = ui.dbs->actor.Find("Player");
+            if (!def && !ui.dbs->actor.actors.empty())
+                def = &ui.dbs->actor.actors.begin()->second;
+        }
+        int level = ui.es ? ui.es->GetVariableInt("level") : 0;
         int gold = ui.es ? ui.es->GetVariableInt("gold") : 0;
-        ImGui::SetCursorScreenPos(ImVec2(bx, by));        ImGui::Text("HP:   %d", hp);
-        ImGui::SetCursorScreenPos(ImVec2(bx, by + 24));   ImGui::Text("MP:   %d", mp);
-        ImGui::SetCursorScreenPos(ImVec2(bx, by + 48));   ImGui::Text("Gold: %d", gold);
+
+        if (def) {
+            if (level <= 0) level = 1;
+            ActorBattleStats st = EvalActorBattleStats(*def, level);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by));
+            ImGui::Text("%s   Lv %d", def->name.c_str(), level);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 24));  ImGui::Text("HP:  %d", st.hp);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 48));  ImGui::Text("MP:  %d", st.mp);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 72));  ImGui::Text("ATK: %d", st.atk);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 96));  ImGui::Text("DEF: %d", st.def);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 124)); ImGui::Text("Gold: %d", gold);
+        } else {
+            // 无角色数据时退化为变量占位（原行为）
+            int hp = ui.es ? ui.es->GetVariableInt("hp") : 0;
+            int mp = ui.es ? ui.es->GetVariableInt("mp") : 0;
+            ImGui::SetCursorScreenPos(ImVec2(bx, by));        ImGui::Text("HP:   %d", hp);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 24));   ImGui::Text("MP:   %d", mp);
+            ImGui::SetCursorScreenPos(ImVec2(bx, by + 48));   ImGui::Text("Gold: %d", gold);
+        }
         ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + box_h - 38.0f));
         if (ImGui::Button("Back", ImVec2(bw, 28.0f))) sub = PauseSub::None;
     }
@@ -247,15 +307,40 @@ void DrawChoices(const PlayUIContext& ui) {
 
 // ---- Toast 浮动提示 ----
 void DrawToasts(const PlayUIContext& ui) {
-    if (!ui.dl || !ui.es) return;
-    for (const auto& toast : ui.es->GetToasts()) {
-        float a = std::clamp(toast.timer / 0.5f, 0.0f, 1.0f);
-        ImVec2 p = WorldToScreen(ui, toast.world_pos.x, toast.world_pos.y + 24.0f);
-        ImVec2 ts = ImGui::CalcTextSize(toast.text.c_str());
-        p.x -= ts.x * 0.5f;
-        ui.dl->AddText(ImVec2(p.x + 1, p.y + 1), IM_COL32(0, 0, 0, (int)(180 * a)),
-                       toast.text.c_str());
-        ui.dl->AddText(p, IM_COL32(255, 240, 180, (int)(255 * a)), toast.text.c_str());
+    if (!ui.dl) return;
+    // 实体头顶的世界锚定 toast（EventSystem 事件动作驱动）
+    if (ui.es) {
+        for (const auto& toast : ui.es->GetToasts()) {
+            float a = std::clamp(toast.timer / 0.5f, 0.0f, 1.0f);
+            ImVec2 p = WorldToScreen(ui, toast.world_pos.x, toast.world_pos.y + 24.0f);
+            ImVec2 ts = ImGui::CalcTextSize(toast.text.c_str());
+            p.x -= ts.x * 0.5f;
+            ui.dl->AddText(ImVec2(p.x + 1, p.y + 1), IM_COL32(0, 0, 0, (int)(180 * a)),
+                           toast.text.c_str());
+            ui.dl->AddText(p, IM_COL32(255, 240, 180, (int)(255 * a)), toast.text.c_str());
+        }
+    }
+
+    // D6-1：屏幕顶部系统 toast（Log Warn/Error → Play Mode 可见）
+    EnsureScreenToastSink();
+    auto& toasts = ScreenToasts();
+    float dt = ImGui::GetIO().DeltaTime;
+    float ty = ui.view_min.y + 8.0f;
+    for (size_t i = 0; i < toasts.size();) {
+        auto& t = toasts[i];
+        t.age += dt;
+        if (t.age >= kScreenToastLife) { toasts.erase(toasts.begin() + i); continue; }
+        float a = std::clamp((kScreenToastLife - t.age) / 0.5f, 0.0f, 1.0f);
+        std::string text = t.count > 1
+            ? t.text + "  (x" + std::to_string(t.count) + ")" : t.text;
+        ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+        ImVec2 p(ui.view_min.x + (ViewW(ui) - ts.x) * 0.5f, ty);
+        ImU32 col = t.is_error ? IM_COL32(255, 110, 110, (int)(255 * a))
+                               : IM_COL32(255, 210, 120, (int)(255 * a));
+        ui.dl->AddText(ImVec2(p.x + 1, p.y + 1), IM_COL32(0, 0, 0, (int)(180 * a)), text.c_str());
+        ui.dl->AddText(p, col, text.c_str());
+        ty += ts.y + 4.0f;
+        ++i;
     }
 }
 

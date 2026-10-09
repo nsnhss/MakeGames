@@ -44,6 +44,41 @@ void ConsolePanel::SyncFromEngineLog() {
     }
 }
 
+// D6-3：最小命令集（help/clear/stat），替代原来的“仅回显”
+void ConsolePanel::ExecuteCommand(const std::string& cmd) {
+    log_lines_.push_back({ 0, "> " + cmd });
+
+    if (cmd == "help") {
+        AddLog(0, "可用命令：");
+        AddLog(0, "  help   显示本帮助");
+        AddLog(0, "  clear  清空控制台视图（不影响引擎日志历史）");
+        AddLog(0, "  stat   显示日志统计（总数 / Info / Warn / Error）");
+        return;
+    }
+    if (cmd == "clear") {
+        // 与左上角清空按钮一致：只清本地视图，引擎 Log 历史共享给其他 sink
+        log_lines_.clear();
+        synced_log_count_ = mg::core::Log::GetHistory().size();
+        return;
+    }
+    if (cmd == "stat") {
+        int info = 0, warn = 0, err = 0;
+        for (const auto& line : log_lines_) {
+            if (line.level == 0) ++info;
+            else if (line.level == 1) ++warn;
+            else ++err;
+        }
+        std::string msg = "日志统计：视图 " + std::to_string(log_lines_.size())
+            + " 条（引擎历史 " + std::to_string(mg::core::Log::GetHistory().size()) + " 条）"
+            + " | Info " + std::to_string(info)
+            + " | Warn " + std::to_string(warn)
+            + " | Error " + std::to_string(err);
+        AddLog(0, msg.c_str());
+        return;
+    }
+    AddLog(1, ("未知命令: " + cmd + "（输入 help 查看可用命令）").c_str());
+}
+
 void ConsolePanel::Draw() {
     if (!MG_BeginPanel("Console", ICON_FA_TERMINAL, &is_open_)) { MG_EndPanel(); return; }
 
@@ -115,8 +150,7 @@ void ConsolePanel::Draw() {
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
             ImGui_ImplSDL2_InputTextCallback)) {
         if (command_buffer_[0] != '\0') {
-            log_lines_.push_back({ 0, std::string("> ") + command_buffer_ });
-            log_lines_.push_back({ 1, "[Warn] 未知命令（控制台命令暂未实现，仅回显）" });
+            ExecuteCommand(command_buffer_);
             command_buffer_[0] = '\0';
             scroll_to_bottom_ = true;
         }

@@ -1,6 +1,7 @@
 #include "mg_imgui_theme.h"
 #include "imgui.h"
 #include "resource/vfs.h"
+#include "core/log.h"
 #include <stdio.h>
 #include <cstring>
 #include <vector>
@@ -128,22 +129,33 @@ ImFont* MG_LoadFonts(float scale)
 {
     ImGuiIO& io = ImGui::GetIO();
 
-    // ---- 主字体：微软雅黑 16px（按 DPI 缩放） ----
+    // ---- 主字体：中文回退链 msyh（微软雅黑）→ simhei（黑体）→ 默认字体 ----
     ImFontConfig font_cfg;
     font_cfg.OversampleH = 2;
     font_cfg.OversampleV = 2;
     font_cfg.PixelSnapH = true;
 
-    ImFont* font = io.Fonts->AddFontFromFileTTF(
+    const char* cjk_candidates[] = {
         "C:/Windows/Fonts/msyh.ttc",
-        11.0f * scale,
-        &font_cfg,
-        io.Fonts->GetGlyphRangesChineseSimplifiedCommon()
-    );
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+    };
+    ImFont* font = nullptr;
+    for (const char* path : cjk_candidates) {
+        font = io.Fonts->AddFontFromFileTTF(
+            path,
+            11.0f * scale,
+            &font_cfg,
+            io.Fonts->GetGlyphRangesChineseSimplifiedCommon()
+        );
+        if (font) break;
+        MG_LOG_WARN("MG_LoadFonts: CJK 字体加载失败，尝试下一个: " << path);
+    }
 
     if (font == nullptr)
     {
-        // 降级：使用默认字体
+        // 降级：使用默认字体（中文将显示为豆腐块，需用户可见警告）
+        MG_LOG_WARN("MG_LoadFonts: 所有 CJK 字体均不可用，回退默认字体（中文将丢失）");
         font = io.Fonts->AddFontDefault();
     }
 
@@ -163,12 +175,18 @@ ImFont* MG_LoadFonts(float scale)
     if (vfs::ReadFile("assets/fonts/fa-solid-900.ttf", icon_bytes)) {
         void* icon_mem = ImGui::MemAlloc(icon_bytes.size());
         memcpy(icon_mem, icon_bytes.data(), icon_bytes.size());
-        io.Fonts->AddFontFromMemoryTTF(
+        ImFont* icons = io.Fonts->AddFontFromMemoryTTF(
             icon_mem, (int)icon_bytes.size(),
             10.0f * scale,
             &icons_cfg,
             icon_ranges
         );
+        // 注意：缓冲区所有权已移交 ImGui（即使失败也由 atlas 统一释放，不可手动 free）
+        if (!icons) {
+            MG_LOG_WARN("MG_LoadFonts: FontAwesome 图标字体解析失败（图标将显示为豆腐块）");
+        }
+    } else {
+        MG_LOG_WARN("MG_LoadFonts: 图标字体缺失 assets/fonts/fa-solid-900.ttf（图标将显示为豆腐块）");
     }
 
     return font;

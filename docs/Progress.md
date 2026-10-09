@@ -1130,9 +1130,23 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 **验证**：7 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
 
+### D6 好用度优化包 ✅（7 项）
+
+- [x] **D6-1 Play Mode 错误可见（高）**：`playmode_ui.cpp` 挂全局 Log sink——Warn/Error 转屏幕顶部渐隐 toast（同文本合并计数、上限 6 条、4s 寿命、红/黄分色）；纹理/音频/脚本加载失败玩家在 Play Mode 零感知的问题闭环（editor viewport 与 game.exe 两处 DrawToasts 调用点均生效）
+- [x] **D6-2 数据库删除确认**：`item_database_panel.cpp` 5 类删除点（Items/Actors/Skills/Enemies 右键 Delete + Shops Delete Shop + 商品 Del）全部改走 `RequestDelete` 记录 + 帧尾模态框确认后才 erase，不再直接删
+- [x] **D6-3 Console 命令集**：`console_panel.cpp` 输入框回车分发 `help`/`clear`/`stat`（级别计数+历史总数）；顺手修 `std::to_string(log_lines_)` 编译期隐患
+- [x] **D6-4 Pause→Status 实值**：`playmode_ui.cpp` 状态页经 `actor.Find("Player")` + `EvalActorBattleStats(def, level)` 显示与战斗公式一致的 HP/MP/ATK/DEF（原占位裸变量）
+- [x] **D6-5 字体回退链**：`mg_imgui_theme.cpp` 主字体 msyh→simhei→ImGui 默认，每级失败 MG_LOG_WARN；图标字体 vfs 读取失败告警
+- [x] **D6-6 tooltip 补齐**：tile_palette_panel 19 处 + item_database_panel 6 处（Add/Save/Delete 按钮）
+- [x] **D6-7 Sprite 截断告警节流**：`sprite_render_system.cpp` 超 4096 实例只警一次，回落重置
+
+**验证**：6 个改动 TU 单编译零警告 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D5：LauncherWindow 拆 7 文件——ui_kit/path_utils 共享助手 + 页面 4 文件；105 tests / 589 checks 全绿）
+> **最后更新**：2026-09-07（阶段 D6：好用度优化包 7 项——Play Mode 错误 toast/数据库删除确认/Console 命令/Status 实值/字体回退/tooltip/告警节流；105 tests / 589 checks 全绿）
+>
+> ~~最后更新：2026-09-07~~（阶段 D5：LauncherWindow 拆 7 文件——ui_kit/path_utils 共享助手 + 页面 4 文件；105 tests / 589 checks 全绿）
 >
 > ~~最后更新：2026-09-07~~（阶段 D4：ViewportPanel 拆 4 文件 + Details 面板 Undo 化；105 tests / 589 checks 全绿）
 >

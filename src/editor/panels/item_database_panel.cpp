@@ -49,6 +49,32 @@ const char* ItemDatabasePanel::GetIcon() const {
     return ICON_FA_BOOK;
 }
 
+// D6-2：删除确认——记录待删动作，帧尾模态框确认后才执行
+void ItemDatabasePanel::RequestDelete(const std::string& label, std::function<void()> action) {
+    pending_delete_label_ = label;
+    pending_delete_action_ = std::move(action);
+    ImGui::OpenPopup("确认删除##db");
+}
+
+void ItemDatabasePanel::DrawDeleteConfirm() {
+    if (ImGui::BeginPopupModal("确认删除##db", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("确认删除 %s ？", pending_delete_label_.c_str());
+        ImGui::TextDisabled("此操作不可撤销。");
+        if (ImGui::Button("删除", ImVec2(100, 0))) {
+            if (pending_delete_action_) pending_delete_action_();
+            pending_delete_action_ = nullptr;
+            db_dirty_ = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(100, 0))) {
+            pending_delete_action_ = nullptr;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void ItemDatabasePanel::Draw() {
     if (!MG_BeginPanel("Item Database", ICON_FA_BOOK, &is_open_,
                        ImGuiWindowFlags_NoDocking)) { MG_EndPanel(); return; }
@@ -63,14 +89,16 @@ void ItemDatabasePanel::Draw() {
                 auto& def = db.items[new_id];
                 def.id = new_id; def.name = "New Item"; def.description = ""; def.price = 0;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增物品条目");
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_SAVE " Save")) if (on_save_) on_save_();
+            if (ImGui::Button(ICON_FA_SAVE " Save")) { if (on_save_) { on_save_(); db_dirty_ = false; } }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("保存全部数据库到项目文件");
+            if (db_dirty_) { ImGui::SameLine(); ImGui::TextDisabled("(未保存)"); }
             ImGui::Separator();
 
             std::vector<std::string> ids;
             for (const auto& [id, _] : db.items) ids.push_back(id);
             std::sort(ids.begin(), ids.end());
-            std::string to_delete;
             if (ImGui::BeginTable("ItemTable", 4,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                     ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
@@ -85,14 +113,17 @@ void ItemDatabasePanel::Draw() {
                     ImGui::TableSetColumnIndex(0);
                     ImGui::Selectable((id + "##sel_" + id).c_str(), false,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
-                    if (ImGui::BeginPopupContextItem() && ImGui::MenuItem("Delete")) to_delete = id;
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Delete"))
+                            RequestDelete("物品 " + id, [this, id]() { databases_.item.items.erase(id); });
+                        ImGui::EndPopup();
+                    }
                     ImGui::TableSetColumnIndex(1); InputTextString(("##name_" + id).c_str(), &def.name);
                     ImGui::TableSetColumnIndex(2); InputTextString(("##desc_" + id).c_str(), &def.description);
                     ImGui::TableSetColumnIndex(3); ImGui::InputInt(("##price_" + id).c_str(), &def.price);
                 }
                 ImGui::EndTable();
             }
-            if (!to_delete.empty()) db.items.erase(to_delete);
             ImGui::EndTabItem();
         }
 
@@ -108,14 +139,16 @@ void ItemDatabasePanel::Draw() {
                 def.atk_peak = def.atk; def.def_peak = def.def;
                 selected_actor_id_ = new_id;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增角色条目（选中后可编辑成长曲线）");
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_SAVE " Save")) if (on_save_) on_save_();
+            if (ImGui::Button(ICON_FA_SAVE " Save")) { if (on_save_) { on_save_(); db_dirty_ = false; } }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("保存全部数据库到项目文件");
+            if (db_dirty_) { ImGui::SameLine(); ImGui::TextDisabled("(未保存)"); }
             ImGui::Separator();
 
             std::vector<std::string> ids;
             for (const auto& [id, _] : db.actors) ids.push_back(id);
             std::sort(ids.begin(), ids.end());
-            std::string to_delete;
             if (ImGui::BeginTable("ActorTable", 7,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                     ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
@@ -135,7 +168,14 @@ void ItemDatabasePanel::Draw() {
                             ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
                         selected_actor_id_ = id;
                     }
-                    if (ImGui::BeginPopupContextItem() && ImGui::MenuItem("Delete")) to_delete = id;
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Delete"))
+                            RequestDelete("角色 " + id, [this, id]() {
+                                databases_.actor.actors.erase(id);
+                                if (selected_actor_id_ == id) selected_actor_id_.clear();
+                            });
+                        ImGui::EndPopup();
+                    }
                     ImGui::TableSetColumnIndex(1); InputTextString(("##name_" + id).c_str(), &def.name);
                     ImGui::TableSetColumnIndex(2); ImGui::InputInt(("##hp_" + id).c_str(), &def.hp);
                     ImGui::TableSetColumnIndex(3); ImGui::InputInt(("##mp_" + id).c_str(), &def.mp);
@@ -144,10 +184,6 @@ void ItemDatabasePanel::Draw() {
                     ImGui::TableSetColumnIndex(6); InputTextString(("##sprite_" + id).c_str(), &def.sprite);
                 }
                 ImGui::EndTable();
-            }
-            if (!to_delete.empty()) {
-                db.actors.erase(to_delete);
-                if (selected_actor_id_ == to_delete) selected_actor_id_.clear();
             }
 
             // ---- 成长曲线编辑（选中 Actor 时显示）----
@@ -227,14 +263,16 @@ void ItemDatabasePanel::Draw() {
                 auto& def = db.skills[new_id];
                 def.id = new_id; def.name = "New Skill"; def.mp_cost = def.damage = 0; def.description = "";
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增技能条目");
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_SAVE " Save")) if (on_save_) on_save_();
+            if (ImGui::Button(ICON_FA_SAVE " Save")) { if (on_save_) { on_save_(); db_dirty_ = false; } }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("保存全部数据库到项目文件");
+            if (db_dirty_) { ImGui::SameLine(); ImGui::TextDisabled("(未保存)"); }
             ImGui::Separator();
 
             std::vector<std::string> ids;
             for (const auto& [id, _] : db.skills) ids.push_back(id);
             std::sort(ids.begin(), ids.end());
-            std::string to_delete;
             if (ImGui::BeginTable("SkillTable", 5,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                     ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
@@ -250,7 +288,11 @@ void ItemDatabasePanel::Draw() {
                     ImGui::TableSetColumnIndex(0);
                     ImGui::Selectable((id + "##sel_" + id).c_str(), false,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
-                    if (ImGui::BeginPopupContextItem() && ImGui::MenuItem("Delete")) to_delete = id;
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Delete"))
+                            RequestDelete("技能 " + id, [this, id]() { databases_.skill.skills.erase(id); });
+                        ImGui::EndPopup();
+                    }
                     ImGui::TableSetColumnIndex(1); InputTextString(("##name_" + id).c_str(), &def.name);
                     ImGui::TableSetColumnIndex(2); ImGui::InputInt(("##mpc_" + id).c_str(), &def.mp_cost);
                     ImGui::TableSetColumnIndex(3); ImGui::InputInt(("##dmg_" + id).c_str(), &def.damage);
@@ -258,7 +300,6 @@ void ItemDatabasePanel::Draw() {
                 }
                 ImGui::EndTable();
             }
-            if (!to_delete.empty()) db.skills.erase(to_delete);
             ImGui::EndTabItem();
         }
 
@@ -271,14 +312,16 @@ void ItemDatabasePanel::Draw() {
                 def.id = new_id; def.name = "New Enemy";
                 def.hp = def.atk = def.def = def.gold = def.exp = 0; def.sprite = "";
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增敌人条目");
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_SAVE " Save")) if (on_save_) on_save_();
+            if (ImGui::Button(ICON_FA_SAVE " Save")) { if (on_save_) { on_save_(); db_dirty_ = false; } }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("保存全部数据库到项目文件");
+            if (db_dirty_) { ImGui::SameLine(); ImGui::TextDisabled("(未保存)"); }
             ImGui::Separator();
 
             std::vector<std::string> ids;
             for (const auto& [id, _] : db.enemies) ids.push_back(id);
             std::sort(ids.begin(), ids.end());
-            std::string to_delete;
             if (ImGui::BeginTable("EnemyTable", 8,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                     ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
@@ -297,7 +340,11 @@ void ItemDatabasePanel::Draw() {
                     ImGui::TableSetColumnIndex(0);
                     ImGui::Selectable((id + "##sel_" + id).c_str(), false,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
-                    if (ImGui::BeginPopupContextItem() && ImGui::MenuItem("Delete")) to_delete = id;
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Delete"))
+                            RequestDelete("敌人 " + id, [this, id]() { databases_.enemy.enemies.erase(id); });
+                        ImGui::EndPopup();
+                    }
                     ImGui::TableSetColumnIndex(1); InputTextString(("##name_" + id).c_str(), &def.name);
                     ImGui::TableSetColumnIndex(2); ImGui::InputInt(("##hp_" + id).c_str(), &def.hp);
                     ImGui::TableSetColumnIndex(3); ImGui::InputInt(("##atk_" + id).c_str(), &def.atk);
@@ -308,7 +355,6 @@ void ItemDatabasePanel::Draw() {
                 }
                 ImGui::EndTable();
             }
-            if (!to_delete.empty()) db.enemies.erase(to_delete);
             ImGui::EndTabItem();
         }
 
@@ -321,8 +367,11 @@ void ItemDatabasePanel::Draw() {
                 def.id = new_id;
                 selected_shop_id_ = new_id;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增商店");
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_SAVE " Save")) if (on_save_) on_save_();
+            if (ImGui::Button(ICON_FA_SAVE " Save")) { if (on_save_) { on_save_(); db_dirty_ = false; } }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("保存全部数据库到项目文件");
+            if (db_dirty_) { ImGui::SameLine(); ImGui::TextDisabled("(未保存)"); }
             ImGui::Separator();
 
             ImGui::Columns(2, "ShopColumns", true);
@@ -340,8 +389,11 @@ void ItemDatabasePanel::Draw() {
             }
             ImGui::EndChild();
             if (ImGui::Button("Delete Shop") && !selected_shop_id_.empty()) {
-                db.shops.erase(selected_shop_id_);
-                selected_shop_id_.clear();
+                std::string sid = selected_shop_id_;
+                RequestDelete("商店 " + sid, [this, sid]() {
+                    databases_.shop.shops.erase(sid);
+                    if (selected_shop_id_ == sid) selected_shop_id_.clear();
+                });
             }
 
             ImGui::NextColumn();
@@ -379,9 +431,9 @@ void ItemDatabasePanel::Draw() {
                 if (ImGui::Button("Add Item") && !new_item_id.empty()) {
                     shop.items.push_back({new_item_id, new_price});
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("把所选物品加入商店商品列表");
 
                 ImGui::Separator();
-                int delete_idx = -1;
                 if (ImGui::BeginTable("ShopItemTable", 3,
                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_SizingStretchProp)) {
@@ -399,12 +451,17 @@ void ItemDatabasePanel::Draw() {
                         ImGui::TableSetColumnIndex(1);
                         ImGui::InputInt(("##price_" + std::to_string(i)).c_str(), &entry.price);
                         ImGui::TableSetColumnIndex(2);
-                        if (ImGui::Button(("Del##" + std::to_string(i)).c_str())) delete_idx = i;
+                        if (ImGui::Button(("Del##" + std::to_string(i)).c_str())) {
+                            std::string sid = selected_shop_id_;
+                            RequestDelete("商品 " + display, [this, sid, i]() {
+                                auto sit = databases_.shop.shops.find(sid);
+                                if (sit != databases_.shop.shops.end() &&
+                                    i >= 0 && i < (int)sit->second.items.size())
+                                    sit->second.items.erase(sit->second.items.begin() + i);
+                            });
+                        }
                     }
                     ImGui::EndTable();
-                }
-                if (delete_idx >= 0 && delete_idx < (int)shop.items.size()) {
-                    shop.items.erase(shop.items.begin() + delete_idx);
                 }
             } else {
                 ImGui::TextDisabled("Select a shop on the left to edit items.");
@@ -415,6 +472,8 @@ void ItemDatabasePanel::Draw() {
 
         ImGui::EndTabBar();
     }
+
+    DrawDeleteConfirm();
 
     MG_EndPanel();
 }

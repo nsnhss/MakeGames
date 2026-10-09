@@ -21,14 +21,22 @@ void SpriteRenderSystem::Render(VkCommandBuffer cmd, World* world, const Config&
 
     // 整帧只上传一次 instance 数据（超容量截断），避免多组覆盖同一缓冲的录制期隐患
     uint32_t capacity = (uint32_t)(cfg.instance_vb_size / sizeof(SpriteInstance));
+    // D6-7：截断警告节流——连续超量只警告一次（回落后重置），防每帧刷日志；
+    // 经 core::Log 进入编辑器 Console 及 Play Mode 屏幕 toast（D6-1）
+    static bool s_trunc_warned = false;
     if (instances.size() > capacity) {
-        MG_LOG_WARN("SpriteRenderSystem: " << instances.size()
-                    << " instances exceed capacity " << capacity << ", truncated");
+        if (!s_trunc_warned) {
+            s_trunc_warned = true;
+            MG_LOG_WARN("SpriteRenderSystem: " << instances.size()
+                        << " instances exceed capacity " << capacity << ", truncated");
+        }
         instances.resize(capacity);
         for (auto& b : batches) {
             if (b.first_instance >= capacity) { b.count = 0; continue; }
             if (b.first_instance + b.count > capacity) b.count = capacity - b.first_instance;
         }
+    } else {
+        s_trunc_warned = false;
     }
     cfg.instance_vb->Upload(instances.data(), instances.size() * sizeof(SpriteInstance));
 

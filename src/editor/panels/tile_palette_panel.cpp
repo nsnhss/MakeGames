@@ -46,6 +46,7 @@ void TilePalettePanel::Draw() {
             }
             ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("选择当前使用的图块集");
     } else {
         ImGui::TextDisabled("No tilesets loaded.");
     }
@@ -63,6 +64,7 @@ void TilePalettePanel::Draw() {
         nt_rows_ = 4;
         nt_error_[0] = '\0';
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("从图片创建新图块集（图片复制到项目 assets/tilesets/）");
 
     // New Tileset Popup
     if (ImGui::BeginPopupModal("NewTilesetPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -72,6 +74,7 @@ void TilePalettePanel::Draw() {
         if (ImGui::SmallButton(ICON_FA_FOLDER_OPEN)) {
             ShowTilesetImageDialog(nt_path_, sizeof(nt_path_));
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("浏览图片文件");
         ImGui::InputInt("Tile W", &nt_tile_w_);
         ImGui::InputInt("Tile H", &nt_tile_h_);
         ImGui::InputInt("Columns", &nt_columns_);
@@ -124,6 +127,7 @@ void TilePalettePanel::Draw() {
     if (ImGui::Checkbox("Auto-tile [A]", &auto_tile)) {
         tilesets_.SetAutoTile(ts->name, auto_tile);
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("自动连接相邻同类型瓦片（绘制时按快捷键 A 切换）");
 
     // ---- 瓦片动画编辑 ----
     if (ImGui::TreeNode("Tile Animations")) {
@@ -138,6 +142,7 @@ void TilePalettePanel::Draw() {
                     a.tile_index = sel;
                     a.frames.push_back(sel);
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("为当前选中瓦片添加帧动画");
             } else if (sel < 0) {
                 ImGui::TextDisabled("Select a tile to add animation");
             }
@@ -148,13 +153,16 @@ void TilePalettePanel::Draw() {
                 ImGui::Text("Tile %d (%d frames)", a.tile_index, (int)a.frames.size());
                 ImGui::SameLine();
                 if (sel >= 0 && ImGui::SmallButton("+Sel Frame")) a.frames.push_back(sel);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("把当前选中瓦片追加为动画帧");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("-Frame") && !a.frames.empty()) a.frames.pop_back();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("移除最后一帧");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(70.0f);
                 if (ImGui::DragFloat("fps", &a.fps, 0.1f, 0.1f, 60.0f, "%.1f") && a.fps < 0.1f) a.fps = 0.1f;
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Del")) remove_idx = i;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("删除该瓦片动画");
                 ImGui::PopID();
             }
             if (remove_idx >= 0) ts_mut->animations.erase(ts_mut->animations.begin() + remove_idx);
@@ -168,6 +176,7 @@ void TilePalettePanel::Draw() {
     if (ImGui::Combo("Brush", &brush_mode, brush_names, IM_ARRAYSIZE(brush_names))) {
         tilesets_.SetBrushMode(static_cast<TilesetEditor::Brush>(brush_mode));
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("绘制笔刷：Tiles=瓦片 / Passage=通行阻挡 / Terrain=地形标签");
     if (tilesets_.GetBrushMode() == TilesetEditor::Brush::Passage) {
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "LMB: paint mask  RMB/Shift+LMB: clear");
         uint8_t mask = tilesets_.GetPassageBrushMask();
@@ -178,6 +187,7 @@ void TilePalettePanel::Draw() {
                 else mask &= ~bit;
                 tilesets_.SetPassageBrushMask(mask);
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("勾选 = 该方向阻挡");
         };
         toggle("Up",    mg::scene::Pass_Up);
         ImGui::SameLine();
@@ -193,6 +203,7 @@ void TilePalettePanel::Draw() {
             if (tag > 255) tag = 255;
             tilesets_.SetTerrainBrushTag(static_cast<uint8_t>(tag));
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("地形标签值（0-255，供战斗遭遇等区域判定）");
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "LMB: paint tag  RMB/Shift+LMB: clear");
     }
     ImGui::Separator();
@@ -274,6 +285,7 @@ void TilePalettePanel::Draw() {
                 if (ImGui::SmallButton(is_current ? ">" : " ")) {
                     tilesets_.SetCurrentTileLayer(i);
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("设为当前绘制层");
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
 
@@ -284,6 +296,7 @@ void TilePalettePanel::Draw() {
                     tilesets_.MarkTilemapDirty();
                     session_.MarkSceneDirty();
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("显示/隐藏该层");
                 ImGui::SameLine();
 
                 // Layer name
@@ -295,6 +308,7 @@ void TilePalettePanel::Draw() {
                     layer.name = name_buf;
                     session_.MarkSceneDirty();
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("图层名称");
                 ImGui::SameLine();
 
                 // Move up
@@ -306,6 +320,7 @@ void TilePalettePanel::Draw() {
                     tilesets_.MarkTilemapDirty();
                     session_.MarkSceneDirty();
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("上移图层（先绘制）");
                 ImGui::EndDisabled();
                 ImGui::SameLine();
 
@@ -318,6 +333,7 @@ void TilePalettePanel::Draw() {
                     tilesets_.MarkTilemapDirty();
                     session_.MarkSceneDirty();
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("下移图层（后绘制，覆盖上层）");
                 ImGui::EndDisabled();
                 ImGui::SameLine();
 
@@ -332,6 +348,7 @@ void TilePalettePanel::Draw() {
                     ImGui::PopID();
                     break;
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("删除该图层（不可撤销，请谨慎）");
 
                 ImGui::PopID();
             }
@@ -348,6 +365,7 @@ void TilePalettePanel::Draw() {
                 tilesets_.MarkTilemapDirty();
                 session_.MarkSceneDirty();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("新增图层（置于最上层）");
         }
     }
 
