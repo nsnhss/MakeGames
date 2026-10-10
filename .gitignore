@@ -30,3 +30,11 @@ saves/
 # OS
 Thumbs.db
 .DS_Store
+
+# smoke venv and shots
+tools/smoke/.venv/
+tools/smoke/shots/
+tools/smoke/runtime_project/
+
+# ImGui 窗口布局（编辑器运行时写入 cwd）
+imgui.ini

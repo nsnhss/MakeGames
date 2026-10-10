@@ -1151,9 +1151,23 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 
 **验证**：注释/文档级改动 + build.ps1 all + test 全绿：**105 tests / 589 checks**。
 
+### E1 自动化 GUI 冒烟 + 游戏黑屏修复 ✅
+
+- [x] **冒烟框架 `tools/smoke/smoke_test.py`**：pyautogui 截图 + Pillow stddev/diff 断言 + 分数坐标点击；game 套件 9 项（窗口/标题/进游戏/画面切换/WASD/暂停/Status/存档/日志无 ERROR）、editor 套件 5 项；`--clean` 清测试日志
+- [x] **SDL2 键盘注入攻关**：pyautogui/SendInput 对 SDL2 轮询窗口均无效，唯一有效为 `keybd_event` 显式传硬件扫描码（已封装 `press_key`）
+- [x] **修复（致命）：场景加载黑屏**——`game_main::LoadScene` 在 `SceneSerializer::Deserialize`（内部已 Initialize）之后又调 `Scene::Initialize()`，而其实现无条件重建 `world_` → 实体全丢 → 地图/NPC 全黑、仅剩 EnsurePlayer 白方块。修复：`Scene::Initialize()` 幂等化（仅 world 为空时创建）+ game_main 去掉多余调用
+- [x] **修复：着色器缺失静默崩溃**——game_main `OnInit` 着色器 SPV 加载失败补显式 `MG_LOG_ERROR`（原静默 → pipeline=VK_NULL_HANDLE → AMD 驱动 vkCmdBindPipeline SIGSEGV）；冒烟用 `tools/smoke/runtime_project`（demo 拷贝 + 引擎着色器，模拟导出布局）
+- [x] **修复：demo 玩家出生点卡死**——(160,120) 嵌入建筑碰撞体（AABB 与 Collision 层重叠，四轴全堵，WASD 零位移）→ 移至门口下方空地 (144,176)；`generate_demo_project.py` 同步
+- [x] **新增 `tests/test_tilemap_mesh.cpp` 6 用例**：mesh 顶点/UV/tileset 跳过、真实 Map001 反序列化、resize_all_tilemaps
+- [x] **冒烟脚本自身修正**：WASD 检查原 w/d/s/a 绕圈回原点导致 diff≈0 假阴性 → 改 d,d 单向
+
+**验证**：build.ps1 all + ctest 全绿：**109 tests / 601 checks**；冒烟 game 9 项 + editor 5 项全 PASS（WASD diff=0.131，存档生成）。
+
 ---
 
-> **最后更新**：2026-09-07（阶段 D7：收尾——editor_context 稳定门面标注 + AGENTS.md 全量更新 + 行数复检；D0–D7 全部完成，105 tests / 589 checks 全绿）
+> **最后更新**：2026-09-07（阶段 E1：自动化 GUI 冒烟框架落地 + 场景加载黑屏（Initialize 重置 world）/着色器静默崩溃/demo 出生点卡死三修复；109 tests / 601 checks 全绿，冒烟 game+editor 全 PASS）
+>
+> ~~最后更新：2026-09-07~~（阶段 D7：收尾——editor_context 稳定门面标注 + AGENTS.md 全量更新 + 行数复检；D0–D7 全部完成，105 tests / 589 checks 全绿）
 >
 > ~~最后更新：2026-09-07~~（阶段 D6：好用度优化包 7 项——Play Mode 错误 toast/数据库删除确认/Console 命令/Status 实值/字体回退/tooltip/告警节流；105 tests / 589 checks 全绿）
 >

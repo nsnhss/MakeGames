@@ -113,7 +113,7 @@ public:
             MG_LOG_ERROR("GameApplication: Failed to deserialize scene: " << path);
             return false;
         }
-        s->Initialize();
+        // 注意：Deserialize 内部已 Initialize；此处不可再调，否则 world_ 被重置、实体全丢
         scene_ = std::move(s);
         primary_cam_entity_ = 0;  // 场景替换，主相机缓存失效
         tilemap_dirty_ = true;
@@ -227,6 +227,8 @@ void GameApplication::OnInit() {
                                        (float)viewport_w_, (float)viewport_h_,
                                        VK_POLYGON_MODE_FILL, sprite_pipeline_);
     }
+    if (!sprite_pipeline_.IsValid())
+        MG_LOG_ERROR("GameApplication: sprite pipeline not created (engine shaders missing at assets/shaders?; use an exported layout)");
 
     // Quad VB
     renderer::CreateSpriteQuadVB(renderer_, allocator_, sprite_vb_);
@@ -534,7 +536,16 @@ void GameApplication::OnRender() {
     scissor.extent.height = viewport_h_;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    if (world) {
+    // 健壮性：着色器/管线缺失（如裸项目目录运行、非导出布局）时跳过世界渲染，
+    // 避免把 VK_NULL_HANDLE 管线绑进命令缓冲导致驱动层崩溃（曾现 SIGSEGV@amdvlk）
+    static bool s_pipeline_warned = false;
+    if (world && !sprite_pipeline_.IsValid()) {
+        if (!s_pipeline_warned) {
+            s_pipeline_warned = true;
+            MG_LOG_ERROR("GameApplication: sprite pipeline invalid (shaders missing?); world rendering skipped");
+        }
+    }
+    if (world && sprite_pipeline_.IsValid()) {
         scene::SpriteRenderSystem::Config sprite_cfg = {};
         sprite_cfg.pipeline = sprite_pipeline_.Get();
         sprite_cfg.layout = sprite_pipeline_.GetLayout();

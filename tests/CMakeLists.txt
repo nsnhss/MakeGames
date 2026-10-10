@@ -20,6 +20,7 @@ add_executable(engine_tests
     test_event_triggers.cpp
     test_pak.cpp
     test_player_movement.cpp
+    test_tilemap_mesh.cpp
 )
 
 target_include_directories(engine_tests PRIVATE

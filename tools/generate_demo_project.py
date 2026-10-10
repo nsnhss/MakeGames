@@ -235,7 +235,7 @@ def generate_map001():
                 "id": 3,
                 "components": {
                     "Name": {"value": "Player"},
-                    "Transform": {"position": [160, 120], "rotation": 0, "scale": [1, 1], "sorting_order": 0},
+                    "Transform": {"position": [144, 176], "rotation": 0, "scale": [1, 1], "sorting_order": 0},  # 门口正下方空地；(160,120) 会嵌进建筑碰撞体卡死
                     "Movement": {},
                     "CameraFollowTarget": {},
                     "Sprite": {"texture_path": "assets/sprites/Player.png", "pivot": [0, 0], "tint": [1, 1, 1, 1], "flip_x": False, "flip_y": False, "anim_frame": 0}

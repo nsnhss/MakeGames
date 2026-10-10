@@ -16,7 +16,11 @@ Scene::Scene() = default;
 Scene::~Scene() = default;
 
 void Scene::Initialize() {
-    world_ = std::make_unique<World>();
+    // 幂等：仅当 world 尚未创建时创建。禁止无条件重建——
+    // 若在反序列化填充实体后误调用会清空整个 world（曾导致游戏场景加载即黑屏）。
+    if (!world_) {
+        world_ = std::make_unique<World>();
+    }
 }
 
 void Scene::Shutdown() {
