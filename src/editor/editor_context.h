@@ -238,6 +238,7 @@ public:
     uint32_t GetTilemapEntity() const { return tileset_.GetTilemapEntity(); }
 
     bool LoadTilesetsFromProject(renderer::RendererContext* ctx) { return tileset_.LoadFromProject(project_.GetProjectPath(), ctx); }
+    void SetTilesetRenderer(renderer::RendererContext* ctx) { tileset_renderer_ = ctx; }
     void SaveTilesetsToProject() { tileset_.SaveToProject(project_.GetProjectPath()); }
     bool LoadDemoTileset(renderer::RendererContext* ctx) { return tileset_.LoadDemoTileset(ctx); }
 
@@ -292,6 +293,9 @@ private:
 
     // Tileset 编辑
     TilesetEditor tileset_;
+    // tileset 纹理加载需要的渲染上下文（EditorApplication::OnInit 注入）；
+    // OpenProject 用它重载 tileset——OnInit 阶段项目路径为空，只能回退 Demo
+    renderer::RendererContext* tileset_renderer_ = nullptr;
 
     // 游戏数据库
     GameDatabases databases_;

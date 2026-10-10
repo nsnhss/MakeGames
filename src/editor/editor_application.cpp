@@ -236,6 +236,7 @@ void EditorApplication::OnInit()
 
     EDITOR_LOG("EditorApplication::OnInit about to load tilesets...");
     // ---- Load tilesets from project ----
+    ctx_.SetTilesetRenderer(&renderer_);  // OpenProject 重载 tileset 用（此时项目路径尚未确定）
     if (!ctx_.LoadTilesetsFromProject(&renderer_)) {
         ctx_.LoadDemoTileset(&renderer_);
     }

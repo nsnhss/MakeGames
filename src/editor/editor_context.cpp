@@ -95,6 +95,15 @@ bool EditorContext::OpenProject(const std::string& project_path) {
     EDITOR_LOG("EditorContext::OpenProject SetProjectPath");
     ResourceManager::Get().SetProjectPath(project_.GetProjectPath());
 
+    // 项目路径此刻才确定：重载 tileset（OnInit 时路径为空，只能回退 Demo tileset）。
+    // 必须在 LoadScene 之前——FixupActiveTilemapTileset 与 RebuildTilemapVB 依赖注册表。
+    if (tileset_renderer_) {
+        tileset_.UnloadAllTilesets();
+        if (!tileset_.LoadFromProject(project_.GetProjectPath(), tileset_renderer_)) {
+            tileset_.LoadDemoTileset(tileset_renderer_);
+        }
+    }
+
     // 加载全部游戏数据库（物品/角色/技能/敌人/商店）
     databases_.LoadFromDirectory(project_.GetProjectPath() + "/data");
 

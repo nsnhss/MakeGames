@@ -1160,6 +1160,8 @@ ImGui_ImplSDL2_RenderTextInputIME(buf, underline_color);
 - [x] **修复：demo 玩家出生点卡死**——(160,120) 嵌入建筑碰撞体（AABB 与 Collision 层重叠，四轴全堵，WASD 零位移）→ 移至门口下方空地 (144,176)；`generate_demo_project.py` 同步
 - [x] **新增 `tests/test_tilemap_mesh.cpp` 6 用例**：mesh 顶点/UV/tileset 跳过、真实 Map001 反序列化、resize_all_tilemaps
 - [x] **冒烟脚本自身修正**：WASD 检查原 w/d/s/a 绕圈回原点导致 diff≈0 假阴性 → 改 d,d 单向
+- [x] **修复：编辑器 viewport 不渲染 tilemap**——时序 bug：`OnInit` 加载 tilesets.json 时项目路径为空 → 回退 Demo tileset → "Overworld" 不在注册表 → mesh 回调 nullptr → verts=0。修复：`EditorContext` 注入 `RendererContext*`（`SetTilesetRenderer`），`OpenProject` 在 `SetProjectPath` 后、`LoadScene` 前 `UnloadAllTilesets + LoadFromProject`（失败回退 Demo）——启动/菜单打开/最近项目三条路径全覆盖
+- [x] **澄清非 bug**：Map001 Sprite 的 `texture_path` 实际有值，viewport 彩色方块即生成器纯色 PNG 纹理本体
 
 **验证**：build.ps1 all + ctest 全绿：**109 tests / 601 checks**；冒烟 game 9 项 + editor 5 项全 PASS（WASD diff=0.131，存档生成）。
 
